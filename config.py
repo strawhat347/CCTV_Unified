@@ -1,0 +1,125 @@
+"""
+Central configuration for the CCTV Unified Surveillance MVP.
+
+Loads settings from environment variables (see .env.example).
+No business logic lives here -- just config values used across modules.
+"""
+
+import os
+import sys
+from pathlib import Path
+from dotenv import load_dotenv
+
+# --- Monkey-patch for Windows asyncio ProactorEventLoop ---
+# Uvicorn on Windows often overrides the event loop policy back to Proactor,
+# which notoriously crashes with WinError 10054 when a client disconnects early.
+if sys.platform == 'win32':
+    try:
+        from functools import wraps
+        from asyncio.proactor_events import _ProactorBasePipeTransport
+
+        def silence_connection_reset(func):
+            @wraps(func)
+            def wrapper(self, *args, **kwargs):
+                try:
+                    return func(self, *args, **kwargs)
+                except (ConnectionResetError, OSError):
+                    pass
+            return wrapper
+
+        _ProactorBasePipeTransport._call_connection_lost = silence_connection_reset(
+            _ProactorBasePipeTransport._call_connection_lost
+        )
+    except Exception:
+        pass
+
+BASE_DIR = Path(__file__).resolve().parent
+
+load_dotenv(BASE_DIR / ".env")
+
+# --- Mode toggle ---
+# "mock" -> use local video files + seeded mock registry table
+# "real" -> (future) use RTSP camera feeds + real registry API
+MODE = os.getenv("MODE", "mock")
+
+# --- Sentinel Camera Grid API ---
+SENTINEL_API_HOST = os.getenv("SENTINEL_API_HOST", "https://live.corp8.cloud")
+
+
+# --- Database ---
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = int(os.getenv("DB_PORT", "3306"))
+DB_NAME = os.getenv("DB_NAME", "cctv_unified")
+DB_USER = os.getenv("DB_USER", "root")
+DB_PASS = os.getenv("DB_PASS", "")
+DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "15"))
+
+# --- API Security ---
+API_KEY = os.getenv("API_KEY")
+if not API_KEY:
+    raise RuntimeError(
+        "API_KEY is not set. Generate one with: "
+        "python -c \"import secrets; print(secrets.token_urlsafe(32))\" "
+        "and put it in your .env file as API_KEY=... (see .env.example)."
+    )
+API_PORT = int(os.getenv("API_PORT", "8002"))
+
+# --- Model paths ---
+# Prefer custom trained model if present, fallback to models/plate_yolov8n.pt or yolov8n.pt
+_default_trained_plate = BASE_DIR / "runs" / "detect" / "unified_alpr_v1-6" / "weights" / "best.pt"
+_default_model_plate = BASE_DIR / "models" / "plate_yolov8n.pt"
+
+if _default_trained_plate.exists():
+    _plate_model_default = str(_default_trained_plate)
+elif _default_model_plate.exists():
+    _plate_model_default = str(_default_model_plate)
+else:
+    _plate_model_default = str(BASE_DIR / "yolov8n.pt")
+
+YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH", _plate_model_default)
+
+# --- Tiled inference (SAHI-style) ---
+TILE_SIZE = int(os.getenv("TILE_SIZE", "1280"))
+TILE_OVERLAP = float(os.getenv("TILE_OVERLAP", "0.2"))
+TILE_IOU_THRESHOLD = float(os.getenv("TILE_IOU_THRESHOLD", "0.5"))
+
+# --- Hierarchical (two-stage) detector ---
+# Stage 1 uses a COCO-pretrained model to find vehicles, then Stage 2
+# runs the plate detector on native-resolution vehicle crops.
+VEHICLE_MODEL_PATH = os.getenv(
+    "VEHICLE_MODEL_PATH",
+    str(BASE_DIR / "models" / "yolov8n.pt"),
+)
+# COCO class IDs: 2=car, 3=motorcycle, 5=bus, 7=truck
+VEHICLE_CLASSES = [int(c) for c in os.getenv("VEHICLE_CLASSES", "2,3,5,7").split(",")]
+VEHICLE_PADDING = float(os.getenv("VEHICLE_PADDING", "0.2"))  # 20% pad around vehicle box
+USE_HIERARCHICAL = os.getenv("USE_HIERARCHICAL", "true").lower() in ("true", "1", "yes")
+
+# --- Paths ---
+MOCK_VIDEO_DIR = os.getenv("MOCK_VIDEO_DIR", str(BASE_DIR / "data" / "mock_videos"))
+SEED_REGISTRY_CSV = os.getenv("SEED_REGISTRY_CSV", str(BASE_DIR / "data" / "seed_registry.csv"))
+TEST_IMAGES_DIR = os.getenv("TEST_IMAGES_DIR", str(BASE_DIR / "test_images"))
+
+
+def is_mock_mode() -> bool:
+    """Convenience helper used throughout the codebase to branch mock/real behavior."""
+    return MODE.lower() == "mock"
+
+
+# --- Hardware Acceleration ---
+# Set USE_GPU to "true" in your .env file when you have a capable GPU setup.
+USE_GPU_ENV = os.getenv("USE_GPU", "false").lower() in ("true", "1", "yes")
+
+def should_use_gpu() -> bool:
+    """
+    Convenience helper used to decide whether to load models onto GPU or CPU.
+    Returns True if USE_GPU is enabled in env and PyTorch detects CUDA.
+    """
+    if not USE_GPU_ENV:
+        return False
+    
+    try:
+        import torch
+        return torch.cuda.is_available()
+    except ImportError:
+        return False

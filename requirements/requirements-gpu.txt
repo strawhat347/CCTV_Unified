@@ -1,0 +1,15 @@
+# ==============================================================================
+# CCTV Unified Surveillance MVP - GPU Accelerated Requirements (CUDA 12.1+)
+# ==============================================================================
+
+# CUDA PyTorch extra index
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch>=2.2.0
+torchvision>=0.17.0
+
+# PaddlePaddle GPU wheel find-links
+--find-links https://www.paddlepaddle.org.cn/whl/windows/mkl/avx/stable.html
+paddlepaddle-gpu>=2.6.0
+
+# Base dependencies
+-r requirements.txt

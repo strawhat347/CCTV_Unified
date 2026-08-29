@@ -1,0 +1,11 @@
+# ==============================================================================
+# CCTV Unified Surveillance MVP - CPU Fallback Requirements
+# ==============================================================================
+
+# PyTorch CPU extra index
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.2.0
+torchvision>=0.17.0
+
+# Base dependencies
+-r requirements.txt

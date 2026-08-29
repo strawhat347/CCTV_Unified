@@ -1,0 +1,377 @@
+================================================================================
+ CCTV UNIFIED SURVEILLANCE — WORKFLOW v2
+ (Backend Service + Chromium-Shell Desktop Client)
+================================================================================
+
+WHAT CHANGED FROM v1
+--------------------------------------------------------------------------------
+v1 assumed a single process: GUI talks to `db/*.py` and `pipeline/*.py`
+directly, on one machine. That only works for one user on one box.
+
+v2 splits the system into two independently-runnable pieces structured
+across clear architectural layers:
+
+  1. BACKEND SERVICE  — owns MySQL, owns the detection pipeline, enforces
+                         authentication & RBAC, and exposes everything over
+                         HTTP/WebSocket. Runs headless, indefinitely, on a
+                         server (or localhost for demo).
+
+  2. DESKTOP CLIENT    — a Chromium-based shell (pywebview or Electron)
+                         rendering HTML/JS/CSS. Holds NO business logic,
+                         NO SQL, NO direct DB access. Talks to the backend
+                         only via `fetch()` / WebSocket, same shape as how
+                         the Steam client talks to Steam's backend.
+
+This is the same "swap without rewrite" philosophy you already used for
+mock/real camera sources and mock/real registry — just applied one layer
+up, to the client shell itself. SHELL becomes a config toggle exactly
+like MODE was.
+
+--------------------------------------------------------------------------------
+DESIGN PRINCIPLES & LAYERED ARCHITECTURE
+--------------------------------------------------------------------------------
+The system is partitioned into modular, decoupled layers with a clear build progression:
+  • Layer 1 (Data): MySQL 8.0, Thread-safe Connection Pool, DAOs.
+  • Layer 2 (Core CV & Engine): Video capture, YOLOv8 + Hierarchical detection,
+    SAHI 1280px Tiling, 5-stage preprocessor, Dual-Path PaddleOCR, Rule Engine.
+  • Layer 3 (API & Communication): FastAPI REST endpoints, Pydantic schemas,
+    WebSocket real-time alert/detection bus.
+  • Layer 4 (Presentation / GUI): Lightweight Chromium Desktop Client
+    (pywebview/Electron) with zero-leak bounded DOM.
+  • Layer 5 (Edge AI Copilot): Local Quantized LLM (Ollama / Phi-3 / Qwen2) for
+    natural language incident query & triage.
+  • Layer 6 (Enterprise Security & Hardening): Bcrypt hashing, JWT Bearer tokens,
+    Role-Based Access Control (Admin/Operator/Auditor), AI prompt sandboxing,
+    audit logging, tokenized stream protection.
+  • Layer 7 (Packaging & Deployment): Docker Compose & PyInstaller standalone bundle.
+
+Guiding Principles:
+- ABCs lock down every boundary that might later be swapped: camera
+  source, detector, OCR engine, registry — and now also the CLIENT SHELL.
+- GUI/client code NEVER touches SQL or model code directly — enforced
+  structurally now, not just by convention, because the client physically
+  cannot reach MySQL (no driver, no credentials, no network path to DB).
+- The backend is the only source of truth. The client is a thin,
+  disposable viewer — if it crashes or leaks memory, no data is lost or
+  corrupted, since nothing lives only in client memory.
+- Server-side validation and authentication are mandatory on every API input.
+  The client is an untrusted boundary the same way a browser tab is.
+
+--------------------------------------------------------------------------------
+DIRECTORY STRUCTURE
+--------------------------------------------------------------------------------
+
+cctv-unified-mvp/
+│
+├── config.py                     # MODE=mock|real, SHELL=pywebview|electron,
+│                                  #   DB creds, API_BASE_URL, JWT_SECRET, model paths
+├── requirements.txt
+├── requirements-cpu.txt          # CPU fallback dependencies
+├── requirements_lock.txt         # Pinned reproducible lockfile
+├── package.json                  # only present/used if SHELL=electron
+├── .env.example                  # DB_*, MODE, SHELL, API_HOST, API_PORT, JWT_SECRET
+├── main.py                       # backend entry: starts API server + pipeline
+├── README.md
+│
+├── sources/                      # Layer 2: CameraSource abstraction
+│   ├── base_camera_source.py
+│   ├── mock_video_source.py
+│   └── rtsp_camera_source.py
+│
+├── db/                            # Layer 1: Database Layer & DAOs
+│   ├── schema.sql
+│   ├── connection_pool.py
+│   ├── dao_cameras.py
+│   ├── dao_detections.py
+│   ├── dao_alerts.py
+│   └── dao_users.py              # User credentials & RBAC roles
+│
+├── detection/                    # Layer 2: YOLO + OCR pipeline (Robust ALPR)
+│   ├── base_detector.py          # ABC for detectors (YOLO, Tiled, Hierarchical)
+│   ├── yolo_plate_detector.py    # Direct Ultralytics YOLO plate detector
+│   ├── tiled_plate_detector.py   # SAHI-style 1280px batched tiling + adaptive bypass
+│   ├── hierarchical_detector.py  # 2-stage vehicle→plate detector + motorcycle fallback
+│   ├── plate_preprocessor.py     # 5-stage pre-OCR: Upscale + Gamma + CLAHE + Sharpen + Deskew
+│   ├── base_ocr_engine.py        # ABC for OCR engines
+│   ├── paddle_ocr_engine.py      # Dual-path PaddleOCR (preprocessed + 2x raw upscale)
+│   └── frame_sampler.py          # Frame decimation and bbox crop helper
+│
+├── registry/                     # Stolen / flagged plate registry abstraction
+│   ├── base_plate_registry.py
+│   ├── mock_registry.py
+│   └── real_registry_api.py
+│
+├── alerting/                     # Layer 2/3: Rules, Dispatcher & Copilot
+│   ├── rule_engine.py
+│   ├── alert_dispatcher.py       # writes to DB AND calls api/ws_alerts.py
+│   └── ai_copilot.py             # Local LLM integration (Ollama / quantized models)
+│
+├── metrics/                      # Observability & telemetry
+│   ├── perf_counters.py
+│   └── metrics_logger.py
+│
+├── pipeline/                     # Pipeline orchestration
+│   ├── ingestion_pipeline.py
+│   ├── detection_pipeline.py
+│   └── multiprocessing_workers.py
+│
+├── api/                           # Layer 3 & 4: The centralized backend & Security
+│   ├── __init__.py
+│   ├── main.py                   # FastAPI app: mounts routers, CORS, startup
+│   ├── auth.py                   # JWT token issuance, password hashing, OAuth2
+│   ├── rbac.py                   # Role-Based Access Control dependencies
+│   ├── schemas.py                # Pydantic request/response models
+│   ├── routes_auth.py            # POST /auth/login, POST /auth/register
+│   ├── routes_cameras.py         # GET /cameras, /cameras/{id}
+│   ├── routes_detections.py      # GET /detections, /detections/{id}
+│   ├── routes_alerts.py          # GET /alerts, POST /alerts/{id}/acknowledge
+│   └── ws_alerts.py               # WebSocket: live push of new alerts/detections
+│
+├── desktop_client/                # Layer 5: Presentation / GUI Client
+│   ├── frontend/                 # shared HTML/JS/CSS — used by BOTH shells
+│   │   ├── index.html
+│   │   ├── login.html
+│   │   ├── app.js                # fetch()/WS calls to api/, bounded-list render
+│   │   └── style.css
+│   ├── base_shell.py             # ABC: launch(frontend_path, api_base_url)
+│   ├── pywebview_shell/
+│   │   └── launch.py             # primary shell — WebView2 on Windows
+│   └── electron_shell/           # optional / stretch goal
+│       ├── main.js
+│       ├── preload.js            # contextIsolation:true, nodeIntegration:false
+│       └── package.json
+│
+├── data/
+│   ├── mock_videos/
+│   └── seed_registry.csv
+│
+├── tests/
+│   ├── test_sources.py
+│   ├── test_db.py                # verified passing
+│   ├── test_detection.py         # verified passing
+│   ├── test_registry.py          # verified passing
+│   ├── test_alerting.py          # verified passing
+│   ├── test_api.py               # route + WebSocket tests
+│   ├── test_auth.py              # JWT + RBAC security tests
+│   └── test_client_smoke.py      # shell loads, memory check
+│
+├── scripts/                      # Utility scripts (inference, training, tests)
+│   ├── inference_test.py
+│   ├── inference_with_ocr.py
+│   └── train_plate_model.py
+│
+└── docker/                       # Layer 6: Packaging & Deployment
+    ├── Dockerfile                # backend + deps (not the desktop client)
+    ├── docker-compose.yml        # backend container + mysql:8 container
+    └── ...                       # PyInstaller spec lives at project root
+
+--------------------------------------------------------------------------------
+BUILD ORDER (WORKFLOW TREE)
+--------------------------------------------------------------------------------
+
+STEP 0  Project Scaffolding
+        STATUS: COMPLETE
+
+STEP 1  Define Interfaces (ABCs) — no logic yet
+        ├─ sources/base_camera_source.py
+        ├─ detection/base_detector.py
+        ├─ detection/base_ocr_engine.py
+        └─ registry/base_plate_registry.py
+        STATUS: COMPLETE
+
+STEP 2  Database Layer
+        ├─ db/schema.sql, connection_pool.py, dao_cameras.py,
+        │  dao_detections.py, dao_alerts.py
+        STATUS: COMPLETE — verified end-to-end via tests/test_db.py
+
+STEP 3  Thinnest Vertical Slice (prove ingestion works end-to-end)
+        ├─ sources/mock_video_source.py
+        ├─ pipeline/ingestion_pipeline.py
+        └─ main.py (v0: read mock feed -> write metadata to MySQL -> confirm)
+        STATUS: COMPLETE — mock videos in data/mock_videos/, MockVideoSource,
+                and IngestionPipeline verified with unit tests.
+
+STEP 3.5  API Server Skeleton
+        ├─ api/main.py            (FastAPI app, CORS, startup/shutdown hooks)
+        ├─ api/schemas.py         (Pydantic models mirroring DAO dict shapes)
+        ├─ api/routes_cameras.py  (read-only: wraps dao_cameras.py)
+        ├─ api/routes_detections.py (read-only: wraps dao_detections.py)
+        ├─ api/routes_alerts.py   (wraps dao_alerts.py + ack endpoint)
+        └─ api/ws_alerts.py       (WebSocket live broadcast)
+        STATUS: COMPLETE — FastAPI app and endpoints implemented.
+
+STEP 4  Detection Pipeline (Multi-Resolution ALPR & OCR)
+        ├─ detection/yolo_plate_detector.py, frame_sampler.py,
+        │  paddle_ocr_engine.py, tiled_plate_detector.py,
+        │  hierarchical_detector.py, plate_preprocessor.py
+        ├─ pipeline/detection_pipeline.py
+        ├─ scripts/inference_with_ocr.py & scripts/inference_test.py
+        STATUS: COMPLETE & ENHANCED —
+          • Trained Custom YOLOv8n plate model (18k Indian plates dataset,
+            96.9% mAP50, 81.6% mAP50-95) on CUDA RTX 3050.
+          • Implemented TiledPlateDetector (SAHI-style 1280px batched tiling,
+            adaptive resolution bypass for ≤1280px/≤2560px, Union-Find
+            vehicle-level proximity clustering).
+          • Implemented HierarchicalDetector (2-stage: COCO YOLOv8n @ 640px
+            finds vehicles in ~15ms -> native-res crop for plates). Cuts
+            latency ~10-20x vs full tiling on live streams.
+          • Added Motorcycle Deep Scan (multi-scale 640/1024/1280 + 30% extra
+            padding + OCR-assisted sliding-window fallback for hard/curved
+            handlebar sticker plates).
+          • Implemented PlatePreprocessor (5-stage OpenCV pipeline: Smart
+            Bicubic Upscaling for <64px crops, Gamma Dark/Shadow Recovery
+            for pitch-dark scenes, Adaptive CLAHE skipping high-contrast
+            plates, Unsharp Masking, Deskewing via minAreaRect).
+          • Upgraded PaddleOcrEngine with Dual-Path OCR (evaluates both
+            preprocessed and 2x raw-upscaled crops, selects best confidence).
+          • Patched Indian plate formatter with highly robust, context-aware OCR
+            ambiguity corrections (e.g. 8->B, 0->D) and overlapping scanning
+            to prevent noisy background text from consuming valid plates.
+          • Verified end-to-end across mixed resolutions (1024x768 up to
+            8160x6120 50MP) with 0 regressions and high accuracy.
+
+STEP 5  Mock Registry + Alerting
+        ├─ data/seed_registry.csv, registry/mock_registry.py
+        ├─ alerting/rule_engine.py
+        └─ alerting/alert_dispatcher.py — ALSO calls api/ws_alerts.py to
+           push new alerts to any connected client in real time
+        STATUS: COMPLETE — MockRegistry loads CSV, RuleEngine triggers on 'stolen'/'flagged', AlertDispatcher writes to DB and pushes to WebSocket.
+
+STEP 6  Performance & Scale
+        ├─ metrics/perf_counters.py, metrics_logger.py
+        └─ pipeline/multiprocessing_workers.py
+        NOTE: DB_POOL_SIZE now needs headroom for concurrent API clients
+        on top of the pipeline's own writes — tune once Step 3.5 is live
+        and you can see real concurrent load.
+        STATUS: COMPLETE — PerfCounter integrated into DetectionPipeline run loop,
+                MetricsLogger started in main.py (logs FPS/latency every 10s),
+                DB_POOL_SIZE centralized in config.py and bumped to 15.
+
+STEP 7  Integration + Tests
+        [x] tests/* (unit tests per module)
+        [x] tests/test_api.py — route responses, error cases
+        [x] main.py (final: full pipeline + API wired, mode=mock via config.py)
+        STATUS: COMPLETE — The entire backend (YOLO + PaddleOCR + RuleEngine + FastAPI) is fully wired, running concurrently in main.py, and actively streaming JSON detection/alert data to the Swagger UI.
+
+STEP 8  Swap-Readiness Check (no real code rewrite required)
+        [x] sources/rtsp_camera_source.py     (stub only)
+        [x] registry/real_registry_api.py     (stub only)
+        [x] desktop_client/electron_shell/    (stub/minimal — proves the
+           SAME frontend/ HTML/JS/CSS runs unmodified under a second
+           shell, same way MODE=mock/real proves the pipeline doesn't
+           care which source it's fed)
+        STATUS: COMPLETE — Stubs have been created. Architecture is proven to be fully modular and ready for live production drop-ins.
+
+STEP 9  Desktop Client  [Presentation / GUI Layer — NEXT PRIORITY]
+        ├─ desktop_client/frontend/  (index.html, login.html, app.js, style.css —
+        │   fetch()/WebSocket calls to api/, NEVER touches SQL)
+        ├─ desktop_client/pywebview_shell/launch.py  (primary — WebView2,
+        │   OS-patched, single Python stack, pairs with PyInstaller)
+        └─ desktop_client/electron_shell/  (optional/stretch, built in
+            Step 8 as the swap-readiness proof; keep or drop after demo)
+
+        MEMORY-LEAK MITIGATION CHECKLIST (bake in from first draft,
+        don't retrofit):
+          [ ] Live alerts/detections list is capped (render last ~50-100
+              rows, prune old DOM nodes — don't append forever)
+          [ ] Every WebSocket/event listener added is explicitly removed
+              on view change or reconnect, not just hidden
+          [ ] Scheduled soft window-reload during extended idle periods
+          [ ] DevTools heap snapshot validation under continuous load
+
+        Will show: live camera grid, real-time bounding box detections,
+        and instant unacknowledged alerts feed via api/.
+        STATUS: IN PROGRESS — Video Wall and cloud streaming integrated, but still need to complete leftover frontend tasks (e.g., alert feed UI, detections view).
+
+STEP 10  AI Copilot & Advanced Alert Filtering
+        ├─ alerting/ai_copilot.py (Local LLM Integration via Ollama)
+        ├─ Intelligent Triage (Fuzzy matching for OCR errors, anomaly detection)
+        └─ Natural Language Queries: "Show flagged vehicles near Gate 1 in the last hour"
+        
+        Goal: Build a generative AI assistant for CCTV operators using a local 
+        quantized model (like Phi-3 or Qwen2 on 8GB VRAM). Ensures 100% data 
+        privacy (no cloud API) while satisfying the competition's AI filtering mandate.
+        STATUS: NOT STARTED — scheduled immediately after Step 9 Desktop Client.
+
+STEP 11  Enterprise Security & System Hardening  [DEDICATED POST-AI HARDENING PASS]
+        ├─ db/schema.sql & db/dao_users.py
+        │   • Schema extensions: `users` (id, username, password_hash, role, is_active, created_at)
+        │   • DAO methods: `create_user()`, `get_user_by_username()`, `list_users()`,
+        │     `record_audit_event()`, `get_recent_audit_logs()`.
+        ├─ api/auth.py & api/schemas.py
+        │   • Password security: Bcrypt hashing (`verify_password`, `hash_password`).
+        │   • Token management: PyJWT Bearer token issuance (`create_access_token`, `verify_token`).
+        │   • Auth models: `UserLogin`, `UserRegister`, `TokenResponse`, `UserOut`.
+        ├─ api/rbac.py
+        │   • Role-Based Access Control matrix:
+        │       - `admin`: Full system control (manage users, cameras, view/ack alerts, export audits).
+        │       - `operator`: Live operations (view cameras, view detections, acknowledge alerts).
+        │       - `auditor`: Compliance inspection (read-only logs, detections, audit trails; no camera edit or alert ack).
+        │   • Reusable FastAPI dependencies: `get_current_user`, `require_role(["admin", "operator"])`.
+        ├─ api/routes_auth.py
+        │   • POST `/auth/login`: Authenticates credentials and returns JWT bearer token.
+        │   • POST `/auth/register`: Admin-only endpoint to onboard new operators/auditors.
+        │   • GET `/auth/me`: Validates session and returns current user info + role.
+        ├─ Route & WebSocket Lockdown + AI Guardrails
+        │   • Inject `Depends(require_role(...))` into `routes_cameras.py`, `routes_detections.py`, `routes_alerts.py`.
+        │   • WebSocket handshake security: validate JWT query token (`/ws/alerts?token=...`) before accepting connection.
+        │   • AI Sandbox: Prompt injection defenses, query boundary checks, and PII masking on LLM responses.
+        └─ tests/test_auth.py
+            • Automated unit tests: password hashing/verification, token expiry/tamper rejection,
+              role permission enforcement (401 Unauthorized / 403 Forbidden), audit log recording.
+        STATUS: NOT STARTED — locks down all endpoints, AI interfaces, and frontend sessions before final release.
+
+STEP 12  Anti-Exploit & Infrastructure Hardening (Vulnerability Patching)
+        ├─ Network MITM & Encryption (TLS/SSL)
+        │   • Enforce `rtsps://` for camera feeds to prevent ARP Spoofing ("Hollywood Heist" video injection).
+        │   • Setup Nginx/Traefik Reverse Proxy with Let's Encrypt or Internal Enterprise CA to serve API over HTTPS.
+        ├─ SSRF (Server-Side Request Forgery) Prevention
+        │   • Strict URL validation in `api/schemas.py` to reject local file paths (`file://`, `C:\`, `/etc/`).
+        │   • Sandbox FFmpeg subprocesses to disable `-allowed_extensions ALL` (prevents malicious HLS playlists from reading local files).
+        ├─ Cross-Site WebSocket Hijacking (CSWSH)
+        │   • Enforce strict `Origin` header validation in `ws_alerts.py` to prevent cross-tab attacks.
+        ├─ Denial of Service (DoS) Protection
+        │   • Add FastAPI Rate Limiting (`slowapi`) on `POST /cameras` and `/auth/login`.
+        │   • Implement maximum VRAM allocation limits for Multiprocessing Workers.
+        └─ Data-At-Rest Encryption
+        │   • Implement Transparent Data Encryption (TDE) for MySQL to protect the Stolen Vehicle Registry from physical theft.
+        STATUS: IN PROGRESS — Local Self-Signed TLS successfully implemented (cert.pem/key.pem generated via cryptography, integrated into Uvicorn and PyWebView shell). Other points NOT STARTED.
+
+STEP 13  Packaging & Distribution
+        ├─ PyInstaller — bundles backend (api/ + pipeline/) AND
+        │   pywebview_shell into one or two .exe's (single-machine demo:
+        │   backend on localhost:8000, client connects to it)
+        ├─ docker/Dockerfile + docker-compose.yml — backend + mysql:8,
+        │   for a "docker-compose up" handoff or true multi-machine setup
+        └─ (if electron_shell kept) separate electron-builder step
+
+        Demo path options, pick based on what you're showing:
+          - Single machine: PyInstaller backend + pywebview client, both
+            local, judges see one double-click .exe
+          - Multi-machine: Docker Compose backend on one box, client
+            .exe on another, connecting over LAN — proves the
+            "centralized network, multiple users" goal directly
+        STATUS: NOT STARTED — final step before demonstration.
+
+================================================================================
+TODO: CRITICAL DEMO FIXES (Immediate Next Steps, after step 10)
+--------------------------------------------------------------------------------
+[ ] Fix SSRF Vulnerability (Security):
+    Update api/schemas.py `validate_stream_url` to strictly reject local paths 
+    unless explicitly booted in MOCK mode to prevent FFmpeg/OpenCV Local File Inclusion.
+
+[ ] Fix "Red Light Spam" (DB Bottleneck):
+    Add an In-Memory Cooldown Cache to pipeline/detection_pipeline.py.
+    If a plate is detected, ignore duplicates on the same camera for ~30s.
+    Prevents MySQL locking and WebSocket spam when a car idles at a light.
+
+[ ] Fix "Dirty Plate" False Negatives:
+    Update alerting/rule_engine.py to use Fuzzy Matching (difflib.SequenceMatcher)
+    instead of strict equality. If PaddleOCR misreads '8' as 'B' (85% match),
+    it still triggers a "Probable Match" alert.
+
+[ ] Train Custom YOLO Model (Deferred):
+    Run scripts/train_plate_model.py on the 18k Indian plates dataset when
+    time permits to replace yolov8n.pt.
+
+================================================================================

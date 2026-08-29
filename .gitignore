@@ -1,0 +1,22 @@
+# Python Virtual Environments
+.venv*
+env/
+venv/
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Secrets
+.env
+
+# Large Video Files and Datasets
+*.mp4
+*.avi
+*.mov
+data/unified_dataset/
+runs/detect/
+test_images/
+models/en_PP-OCRv4_rec_train/
+*.pdopt
+*.pdparams

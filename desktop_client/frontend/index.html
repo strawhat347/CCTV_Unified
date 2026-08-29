@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self';
+                   script-src 'self';
+                   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+                   font-src 'self' https://fonts.gstatic.com;
+                   img-src 'self' data: http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:* https://*.basemaps.cartocdn.com https://tile.openstreetmap.org https://*.tile.openstreetmap.org https://*.tile.openstreetmap.fr https://server.arcgisonline.com https://live.corp8.cloud;
+                   media-src 'self' http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:* blob: https://live.corp8.cloud;
+                   connect-src 'self' http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:* ws://localhost:* wss://localhost:* ws://127.0.0.1:* wss://127.0.0.1:* https://live.corp8.cloud;
+                   worker-src 'self' blob:;
+                   object-src 'none';
+                   base-uri 'self';
+                   frame-ancestors 'none';">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <title>CCTV Unified Operator Dashboard</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
