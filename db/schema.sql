@@ -16,13 +16,13 @@ USE cctv_unified;
 CREATE TABLE cameras (
     camera_id       INT AUTO_INCREMENT PRIMARY KEY,
     name            VARCHAR(100) NOT NULL,
-    location        VARCHAR(150) NOT NULL,
-    city            VARCHAR(100) NOT NULL,
-    district        VARCHAR(100) NOT NULL,
-    department      VARCHAR(100) NOT NULL,
-    department_id   INT NOT NULL,
-    latitude        DECIMAL(10, 8) NOT NULL,
-    longitude       DECIMAL(11, 8) NOT NULL,
+    location        VARCHAR(150),
+    city            VARCHAR(100),
+    district        VARCHAR(100),
+    department      VARCHAR(100),
+    department_id   INT,
+    latitude        DECIMAL(10, 8),
+    longitude       DECIMAL(11, 8),
     camera_type     VARCHAR(50),                -- Added for Hackathon Model 1 (PTZ, Bullet, etc)
     connectivity    VARCHAR(50),                -- Added for Hackathon Model 1 (LAN, 4G, Fiber)
     storage_details VARCHAR(100),               -- Added for Hackathon Model 1 (Local 7-day, Cloud 15-day)

@@ -1,0 +1,49 @@
+# ==============================================================================
+# CCTV Unified Surveillance MVP - WSL (Linux) GPU Requirements
+# ==============================================================================
+
+# --- PyTorch (Blackwell/sm_120 requires nightly cu128) ---
+--pre
+--extra-index-url https://download.pytorch.org/whl/nightly/cu128
+torch
+torchvision
+torchaudio
+
+# --- PaddlePaddle GPU (Blackwell/sm_120 requires nightly cu126) ---
+--pre
+--extra-index-url https://www.paddlepaddle.org.cn/packages/nightly/cu126/
+paddlepaddle-gpu==3.5.0.dev20260525
+paddleocr>=2.7.0
+
+# --- Web Framework & API Layer ---
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+pydantic>=2.6.0
+slowapi>=0.1.9
+starlette>=0.36.0
+python-multipart>=0.0.9
+websockets>=12.0
+python-dotenv>=1.0.0
+httpx>=0.27.0
+requests>=2.31.0
+
+# --- Database & Storage Layer ---
+mysql-connector-python>=8.3.0
+SQLAlchemy>=2.0.0
+pandas>=2.2.0
+numpy>=1.26.0,<2.0.0
+
+# --- Computer Vision (non-DL-framework) ---
+ultralytics>=8.1.0
+opencv-contrib-python>=4.10.0
+pillow>=10.2.0
+shapely>=2.0.0
+pyclipper>=1.3.0
+scikit-image>=0.22.0
+scipy>=1.12.0
+RapidFuzz>=3.6.0
+
+# --- Utilities & Testing ---
+pytest>=8.0.0
+tqdm>=4.66.0
+PyYAML>=6.0.1

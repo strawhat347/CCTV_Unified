@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { fetchAllAlerts, fetchDetections } from '../services/api';
-import { AlertCircle, Activity, Search, RefreshCw } from 'lucide-react';
+import { fetchAllAlerts, fetchDetections, deleteAllLogs, fetchSystemStatus } from '../services/api';
+import { AlertCircle, Activity, Search, RefreshCw, Trash2, PowerOff, Power } from 'lucide-react';
 
 // Formatter for timestamps
 const formatTime = (ts) => {
@@ -17,9 +17,10 @@ export default function LiveLogs() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [workersActive, setWorkersActive] = useState(false);
 
-  const loadLogs = async () => {
-    setLoading(true);
+  const loadLogs = async (hideLoadingState = false) => {
+    if (!hideLoadingState) setLoading(true);
     try {
       if (activeTab === 'alerts') {
         const data = await fetchAllAlerts(200);
@@ -32,12 +33,43 @@ export default function LiveLogs() {
       console.error('Failed to load logs:', err);
       setLogs([]);
     } finally {
+      if (!hideLoadingState) setLoading(false);
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    if (!window.confirm('Are you sure you want to permanently delete all logs?')) return;
+    setLoading(true);
+    try {
+      await deleteAllLogs();
+      setLogs([]);
+    } catch (err) {
+      console.error('Failed to delete logs:', err);
+      alert('Failed to delete logs');
+    } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    // Always load logs once on mount/tab change
     loadLogs();
+    
+    // Auto-refresh every 1 second, but only if workers are active
+    const intervalId = setInterval(async () => {
+      try {
+        const status = await fetchSystemStatus();
+        setWorkersActive(status.workers_active);
+        
+        if (status.workers_active) {
+          await loadLogs(true); // pass true to hide the loading spinner during background refresh
+        }
+      } catch (err) {
+        console.error("Failed to check system status:", err);
+      }
+    }, 1000);
+    
+    return () => clearInterval(intervalId);
   }, [activeTab]);
 
   const filteredLogs = logs.filter(log => {
@@ -53,7 +85,20 @@ export default function LiveLogs() {
     <div className="h-full w-full bg-bg-primary flex flex-col p-6 animate-in fade-in">
       <div className="flex items-center justify-between mb-6 shrink-0">
         <div>
-          <h2 className="text-2xl font-bold text-text-bright">System Logs</h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-2xl font-bold text-text-bright">System Logs</h2>
+            {workersActive ? (
+              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-success/10 border border-success/20 text-success text-xs font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse"></span>
+                LIVE
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-text-muted/10 border border-text-muted/20 text-text-muted text-xs font-medium">
+                <PowerOff className="w-3 h-3" />
+                PAUSED (Workers Stopped)
+              </span>
+            )}
+          </div>
           <p className="text-text-secondary text-sm mt-1">Review live alerts and raw detection events across all cameras.</p>
         </div>
         <div className="flex items-center gap-3">
@@ -67,14 +112,24 @@ export default function LiveLogs() {
               className="pl-9 pr-4 py-1.5 bg-bg-secondary border border-border-primary rounded-md text-sm text-text-primary focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
             />
           </div>
-          <button 
-            onClick={loadLogs}
-            disabled={loading}
-            className="flex items-center gap-2 px-3 py-1.5 bg-bg-secondary border border-border-primary rounded-md text-text-primary hover:bg-bg-hover transition-colors text-sm font-medium"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
+          <div className="flex gap-2">
+            <button 
+              onClick={handleDeleteAll}
+              disabled={loading}
+              className="flex items-center gap-2 px-3 py-1.5 bg-danger/10 border border-danger/20 rounded-md text-danger hover:bg-danger/20 transition-colors text-sm font-medium"
+            >
+              <Trash2 className="w-4 h-4" />
+              Clear Logs
+            </button>
+            <button 
+              onClick={loadLogs}
+              disabled={loading}
+              className="flex items-center gap-2 px-3 py-1.5 bg-bg-secondary border border-border-primary rounded-md text-text-primary hover:bg-bg-hover transition-colors text-sm font-medium"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+          </div>
         </div>
       </div>
 

@@ -74,9 +74,9 @@ export default function CameraManagementModal({ isOpen, onClose, onImport, onCle
         </div>
       )}
 
-      <div className="bg-bg-elevated border border-border-secondary rounded-xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col">
+      <div className="bg-bg-elevated border border-border-secondary rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border-primary bg-bg-secondary">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border-primary bg-bg-secondary shrink-0">
           <div className="flex items-center gap-2 text-text-bright">
             <CameraIcon className="w-5 h-5" />
             <h2 className="text-sm font-semibold uppercase tracking-wide">Manage Cameras</h2>
@@ -91,7 +91,7 @@ export default function CameraManagementModal({ isOpen, onClose, onImport, onCle
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-border-secondary">
+        <div className="flex border-b border-border-secondary shrink-0">
           <button 
             onClick={() => setActiveTab('add')}
             className={`flex-1 py-2.5 text-xs font-semibold uppercase tracking-wider transition-colors ${
@@ -119,7 +119,7 @@ export default function CameraManagementModal({ isOpen, onClose, onImport, onCle
         </div>
 
         {/* Content Area */}
-        <div className="p-5">
+        <div className="p-5 overflow-y-auto scrollbar-thin">
           {activeTab === 'add' && (
             <form onSubmit={handleAddSubmit} className="space-y-4">
               <div className="grid grid-cols-2 gap-3">

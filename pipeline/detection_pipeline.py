@@ -156,7 +156,7 @@ class DetectionPipeline:
         # Retention policy: prune oldest crops periodically (every 100 detections)
         # to avoid an expensive O(N log N) glob on every single detection.
         if self._detections_written % 100 == 0:
-            existing = sorted(self.crop_dir.glob(f"cam{self.camera_id}_*.jpg"))
+            existing = sorted(self.crop_dir.glob(f"cam{self.camera_id}_*.png"))
             while len(existing) >= MAX_CROPS_PER_CAMERA:
                 oldest = existing.pop(0)
                 try:
@@ -165,7 +165,7 @@ class DetectionPipeline:
                     logger.warning(f"Could not prune old crop {oldest}: {e}")
                     continue  # skip locked files, try the next one
 
-        filename = f"cam{self.camera_id}_{int(time.time() * 1000)}.jpg"
+        filename = f"cam{self.camera_id}_{int(time.time() * 1000)}.png"
         filepath = self.crop_dir / filename
         if not cv2.imwrite(str(filepath), crop):
             logger.warning(f"cv2.imwrite failed for {filepath}")
@@ -192,6 +192,10 @@ class DetectionPipeline:
         for box in boxes:
             # --- Confidence gate ---
             if box.confidence < self.min_detection_confidence:
+                continue
+
+            # Skip vehicle boxes returned by unified YOLO models, only OCR the actual plates
+            if box.class_name not in ("number_plate", "license_plate", "plate"):
                 continue
 
             # --- Crop the plate region ---
@@ -354,7 +358,9 @@ if __name__ == "__main__":
     import config
     from sources.mock_video_source import MockVideoSource
     from detection.yolo_plate_detector import YoloPlateDetector
+
     from detection.paddle_ocr_engine import PaddleOcrEngine
+    ocr = PaddleOcrEngine()
 
     CAMERA_ID = 1
     VIDEO_PATH = Path("data/mock_videos/camera_3_test_2.mp4")
@@ -365,7 +371,6 @@ if __name__ == "__main__":
     detector = YoloPlateDetector()
     detector.load_model(config.YOLO_MODEL_PATH)
 
-    ocr = PaddleOcrEngine()
     ocr.load_model()
 
     # --- Build pipeline ---

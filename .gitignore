@@ -9,14 +9,18 @@ __pycache__/
 
 # Secrets
 .env
+secrets.json
 
 # Large Video Files and Datasets
 *.mp4
 *.avi
 *.mov
 data/unified_dataset/
+data/crops/
+data/mock_videos/
 runs/detect/
 test_images/
 models/en_PP-OCRv4_rec_train/
+models/en_PP-OCRv4_rec_infer/
 *.pdopt
 *.pdparams

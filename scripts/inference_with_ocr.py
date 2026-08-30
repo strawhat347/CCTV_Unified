@@ -78,6 +78,7 @@ def main():
     else:
         print("[Hardware] Using CPU")
 
+    from detection.paddle_ocr_engine import PaddleOcrEngine
     ocr_engine = PaddleOcrEngine(preprocess=True)
     ocr_engine.load_model()
 

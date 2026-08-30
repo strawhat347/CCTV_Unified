@@ -11,7 +11,7 @@ def test_rule_engine_triggers_alerts(mock_dispatch):
     mock_registry = MagicMock()
     
     # Return a clear record for Plate 1
-    mock_registry.lookup.return_value = RegistryRecord(
+    mock_registry.fuzzy_lookup.return_value = RegistryRecord(
         plate_number="GJ05CD6789", status="clear"
     )
     
@@ -20,7 +20,7 @@ def test_rule_engine_triggers_alerts(mock_dispatch):
     mock_dispatch.assert_not_called()
     
     # Return a stolen record for Plate 2
-    mock_registry.lookup.return_value = RegistryRecord(
+    mock_registry.fuzzy_lookup.return_value = RegistryRecord(
         plate_number="MH12AB1234", status="stolen", flags=["reported"]
     )
     

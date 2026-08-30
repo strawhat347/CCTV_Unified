@@ -64,7 +64,7 @@ class PlatePreprocessor:
         apply_bilateral: bool = True,
         bilateral_d: int = 9,
         bilateral_sigma: float = 75.0,
-        apply_morphology: bool = True,
+        apply_morphology: bool = False,
         morph_kernel_size: int = 2,
     ):
         """
@@ -164,7 +164,7 @@ class PlatePreprocessor:
         new_h = int(h * scale)
 
         upscaled = cv2.resize(
-            img, (new_w, new_h), interpolation=cv2.INTER_CUBIC,
+            img, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4,
         )
         return upscaled
 

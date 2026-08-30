@@ -40,3 +40,20 @@ def get_detection(detection_id: int):
 def list_detections_by_camera(camera_id: int, limit: int = Query(default=100, ge=1, le=500)):
     """GET /detections/by-camera/{camera_id} — most recent detections for one camera."""
     return get_detections_by_camera(camera_id=camera_id, limit=limit)
+
+
+
+@router.delete("")
+def delete_all_logs():
+    "DELETE /detections - Temporary endpoint to clear all logs"
+    from db.connection_pool import get_connection
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('DELETE FROM alerts')
+        cursor.execute('DELETE FROM detections')
+        conn.commit()
+        return {"status": "success", "message": "All logs deleted"}
+    finally:
+        cursor.close()
+        conn.close()

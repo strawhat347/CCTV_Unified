@@ -8,11 +8,18 @@ to CPU cleanly.
 
 from pathlib import Path
 from typing import Any, Union
-
 import numpy as np
-import torch
-from ultralytics import YOLO
+import logging
 
+logger = logging.getLogger(__name__)
+
+try:
+    from ultralytics import YOLO
+    from ultralytics.engine.results import Results
+except ImportError:
+    YOLO = None
+
+import torch
 from detection.base_detector import BaseDetector, BoundingBox
 
 
@@ -30,7 +37,7 @@ class YoloPlateDetector(BaseDetector):
         self.model: YOLO | None = None
         self.model_path: str | None = None
         if device is None:
-            self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
+            self.device = "cpu"  # Forced CPU mode per user constraints
         else:
             self.device = device
 

@@ -224,3 +224,29 @@ export async function releaseStream(cameraId) {
     // Best-effort release — don't throw if the backend is unreachable
   }
 }
+
+
+
+/**
+ * Temporary function to wipe all alerts and detections from the database.
+ */
+export async function deleteAllLogs() {
+  await waitForApi();
+  const res = await fetch(`${getApiBase()}/detections`, {
+    method: 'DELETE',
+    headers: getHeaders()
+  });
+  if (!res.ok) throw new Error('Failed to delete logs');
+  return res.json();
+}
+
+/**
+ * Check if the backend pipeline workers are actively running.
+ */
+export async function fetchSystemStatus() {
+  await waitForApi();
+  const res = await fetch(`${getApiBase()}/system/status`, { headers: getHeaders() });
+  if (!res.ok) throw new Error(`GET /system/status failed: ${res.status}`);
+  return res.json();
+}
+

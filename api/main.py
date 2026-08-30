@@ -146,3 +146,12 @@ app.include_router(streams_router)
 def health_check():
     """GET /health — trivial liveness probe, no DB touch."""
     return {"status": "ok"}
+
+
+@app.get("/system/status", tags=["system"])
+@limiter.exempt
+def system_status(request: Request):
+    """Returns the current status of the backend, including whether pipeline workers are active."""
+    workers = getattr(app.state, "workers", [])
+    any_active = any(w.is_alive() for w in workers)
+    return {"workers_active": any_active, "worker_count": len(workers)}

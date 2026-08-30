@@ -68,7 +68,7 @@ def test_api_auth_and_cors(mock_get_all):
 
 # --- Issue 6 ---
 def test_requirements_file():
-    target = "requirements.txt"
+    target = "requirements/requirements.txt"
     with open(target, "r", encoding="utf-8") as f:
         content = f.read()
     assert "paddleocr" in content

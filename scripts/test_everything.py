@@ -128,12 +128,13 @@ def test_detectors(ocr_engine, test_img):
 def test_pipeline(cam_id, yolo_detector, ocr_engine):
     print("--- Testing DetectionPipeline ---")
     video_dir = Path(config.MOCK_VIDEO_DIR)
-    mp4s = list(video_dir.glob("*.mp4"))
-    if not mp4s:
-        print("No mock videos found. Skipping pipeline test.")
-        return
+    videos = list(video_dir.glob("*.mp4")) + list(video_dir.glob("*.webm"))
+    if not videos:
+        logger.error(f"No mock videos found in {video_dir}. Add some .mp4 or .webm files.")
+        sys.exit(1)
         
-    source = MockVideoSource(camera_id=cam_id, video_path=mp4s[0], loop=False)
+    logger.info(f"Using mock video: {videos[0].name}")
+    source = MockVideoSource(camera_id=cam_id, video_path=videos[0], loop=False)
     
     pipeline = DetectionPipeline(
         camera_id=cam_id,

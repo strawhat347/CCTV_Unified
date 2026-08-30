@@ -74,7 +74,7 @@ export default function EditCameraModal({ isOpen, onClose, onSave, camera, isLoa
 
       <div className="bg-bg-secondary w-full max-w-lg rounded-xl shadow-2xl flex flex-col max-h-[90vh] border border-border-secondary overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border-primary bg-bg-secondary">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border-primary bg-bg-secondary shrink-0">
           <div className="flex items-center gap-2 text-text-bright">
             <CameraIcon className="w-5 h-5" />
             <h2 className="text-sm font-semibold uppercase tracking-wide">Edit Camera #{camera.camera_id}</h2>
@@ -89,7 +89,8 @@ export default function EditCameraModal({ isOpen, onClose, onSave, camera, isLoa
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="p-5 overflow-y-auto scrollbar-thin">
+          <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
               <label className="block text-xs font-medium text-text-secondary mb-1">Camera Name *</label>
@@ -173,6 +174,7 @@ export default function EditCameraModal({ isOpen, onClose, onSave, camera, isLoa
             Save Changes
           </button>
         </form>
+        </div>
       </div>
     </div>
   );

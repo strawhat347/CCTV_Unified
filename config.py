@@ -40,7 +40,7 @@ load_dotenv(BASE_DIR / ".env")
 # --- Mode toggle ---
 # "mock" -> use local video files + seeded mock registry table
 # "real" -> (future) use RTSP camera feeds + real registry API
-MODE = os.getenv("MODE", "mock")
+MODE = "mock"
 
 # --- Sentinel Camera Grid API ---
 SENTINEL_API_HOST = os.getenv("SENTINEL_API_HOST", "https://live.corp8.cloud")
@@ -77,6 +77,8 @@ else:
     _plate_model_default = str(BASE_DIR / "yolov8n.pt")
 
 YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH", _plate_model_default)
+
+
 
 # --- Tiled inference (SAHI-style) ---
 TILE_SIZE = int(os.getenv("TILE_SIZE", "1280"))

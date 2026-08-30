@@ -66,23 +66,44 @@ class PaddleOcrEngine(BaseOcrEngine):
 
         use_gpu = config.should_use_gpu()
         
-        try:
-            self.ocr = PaddleOCR(
-                use_angle_cls=True,
-                lang="en",
-                use_gpu=use_gpu,
-                show_log=False,
-            )
-        except Exception as e:
-            if use_gpu:
-                print(f"[PaddleOcrEngine] GPU init failed ({e}), falling back to CPU.")
-                self.ocr = PaddleOCR(
-                    use_angle_cls=True,
-                    lang="en",
-                    use_gpu=False,
-                    show_log=False,
-                )
-            else:
+        from pathlib import Path
+        custom_rec_dir = Path("models/en_PP-OCRv4_rec_infer").resolve()
+        
+        import paddleocr
+        is_v3 = getattr(paddleocr, '__version__', '2.0').startswith('3.')
+        
+        kwargs = {
+            "use_angle_cls": True,
+            "lang": "en",
+            "use_gpu": use_gpu,
+        }
+        
+        if not is_v3 and custom_rec_dir.exists():
+            kwargs["rec_model_dir"] = str(custom_rec_dir)
+            kwargs["show_log"] = False
+        
+        # Strip Nones
+        kwargs = {k: v for k, v in kwargs.items() if v is not None}
+        
+        while True:
+            try:
+                self.ocr = PaddleOCR(**kwargs)
+                break
+            except ValueError as e:
+                error_str = str(e)
+                if "Unknown argument:" in error_str:
+                    bad_arg = error_str.split("Unknown argument:")[-1].strip().strip("'\"")
+                    if bad_arg in kwargs:
+                        print(f"[PaddleOcrEngine] API changed in this PaddleOCR version. Removing unsupported argument: '{bad_arg}'")
+                        del kwargs[bad_arg]
+                        continue
+                # If it's a different ValueError, re-raise it
+                raise
+            except Exception as e:
+                if use_gpu and "gpu" in kwargs:
+                    print(f"[PaddleOcrEngine] GPU init failed ({e}), falling back to CPU.")
+                    kwargs["use_gpu"] = False
+                    continue
                 raise
 
     def read_text(self, cropped_img: np.ndarray) -> Optional[OcrResult]:
@@ -111,7 +132,7 @@ class PaddleOcrEngine(BaseOcrEngine):
         if self._preprocessor is not None:
             candidates.append(self._preprocessor.preprocess(cropped_img))
 
-            # Also try a simple 2× bicubic upscale (preserves high-contrast text)
+            # Also try a simple 2× bicubic upscale as a fallback
             import cv2
             h, w = cropped_img.shape[:2]
             if h < 64 or w < 180:
@@ -123,7 +144,9 @@ class PaddleOcrEngine(BaseOcrEngine):
         else:
             candidates.append(cropped_img)
 
-        # Run OCR on each candidate and keep the best valid result
+        # Run OCR on each candidate in order. 
+        # Prioritize the properly preprocessed candidate if it yields a valid plate
+        # with reasonable confidence, to prevent overconfident hallucinations from the raw fallback.
         best_result: OcrResult | None = None
 
         for img in candidates:
@@ -131,13 +154,16 @@ class PaddleOcrEngine(BaseOcrEngine):
             if parsed is None:
                 continue
 
-            # Check if this read actually forms a valid Indian plate before considering it
             extracted = extract_indian_plate(parsed.text)
             if extracted is None:
                 continue
 
             normalised = normalize_plate_chars(extracted)
             valid_parsed = OcrResult(text=normalised, confidence=parsed.confidence)
+
+            # If the preprocessed image gave a decent valid read, take it immediately!
+            if valid_parsed.confidence > 0.65:
+                return valid_parsed
 
             if best_result is None or valid_parsed.confidence > best_result.confidence:
                 best_result = valid_parsed
@@ -149,7 +175,13 @@ class PaddleOcrEngine(BaseOcrEngine):
         Run PaddleOCR on a single image and parse the result into an
         OcrResult, handling multi-line plates and HSRP filtering.
         """
-        result = self.ocr.ocr(img, cls=True)
+        import paddleocr
+        is_v3 = getattr(paddleocr, '__version__', '2.0').startswith('3.')
+        
+        if is_v3:
+            result = self.ocr.ocr(img)
+        else:
+            result = self.ocr.ocr(img, cls=True)
 
         if not result or not result[0]:
             return None
