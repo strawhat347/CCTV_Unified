@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Hls from 'hls.js';
-import { Video, X, Maximize2, Minimize2, ChevronLeft, RefreshCw, AlertTriangle } from 'lucide-react';
-import { getStreamUrl, getHlsUrl, getSnapshotUrl, releaseStream } from '../services/api';
+import { Video, X, Maximize2, Minimize2, ChevronLeft, RefreshCw, AlertTriangle, Power } from 'lucide-react';
+import { getStreamUrl, getHlsUrl, getSnapshotUrl, releaseStream, toggleCameraScan, fetchSystemStatus } from '../services/api';
 
 /**
  * VideoCell — Individual grid cell in the Fluid Video Wall.
@@ -13,12 +13,51 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
   const [retryKey, setRetryKey] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [shouldLoad, setShouldLoad] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const isTogglingRef = useRef(false);
   const videoRef = useRef(null);
   const cellRef = useRef(null);
 
+  // Initial fetch and polling for AI worker status
+  useEffect(() => {
+    const fetchStatus = () => {
+      fetchSystemStatus()
+        .then(status => {
+          if (!isTogglingRef.current) {
+            setIsScanning(status.active_cameras?.includes(camera?.camera_id) || false);
+          }
+        })
+        .catch(err => console.error("Failed to fetch system status:", err));
+    };
+    
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 5000);
+    return () => clearInterval(interval);
+  }, [camera?.camera_id]);
+
+  const handleToggleScan = async () => {
+    if (isTogglingRef.current) return;
+    isTogglingRef.current = true;
+    
+    const newState = !isScanning;
+    setIsScanning(newState);
+    
+    try {
+      await toggleCameraScan(camera.camera_id, newState);
+    } catch (err) {
+      console.error('Failed to toggle scan for camera:', err);
+      setIsScanning(!newState); // revert
+    } finally {
+      // Allow a buffer time for the backend state to update before we accept poll overwrites
+      setTimeout(() => {
+        isTogglingRef.current = false;
+      }, 2000);
+    }
+  };
+
   // Stagger the mounting of heavy video feeds to prevent browser lockup
   useEffect(() => {
-    const delay = index * 150; // Stagger each camera by 150ms
+    const delay = index * 200; // Stagger each camera by 200ms
     const timer = setTimeout(() => setShouldLoad(true), delay);
     return () => clearTimeout(timer);
   }, [index]);
@@ -50,14 +89,21 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
   };
 
   // ── HLS setup & teardown ──────────────────────────────
+  const isLocalVideo = camera?.stream_url && (camera.stream_url.endsWith('.mp4') || camera.stream_url.endsWith('.webm'));
+  const effectiveStreamMode = isLocalVideo ? 'mp4' : streamMode;
+
   useEffect(() => {
     let hls = null;
 
     if (camera && shouldLoad && !hasError) {
-      if (streamMode === 'mp4' && videoRef.current) {
-        videoRef.current.src = getStreamUrl(camera.camera_id);
-        videoRef.current.play().catch(() => {});
-      } else if (streamMode === 'hls') {
+      if (effectiveStreamMode === 'mp4' && videoRef.current) {
+        const filename = camera.stream_url.split(/[/\\]/).pop();
+        videoRef.current.src = `http://127.0.0.1:8002/videos/${filename}`;
+        videoRef.current.loop = true;
+        if (!isLocalVideo) {
+          videoRef.current.play().catch(() => {});
+        }
+      } else if (effectiveStreamMode === 'hls') {
         const hlsUrl = getHlsUrl(camera.camera_id);
 
         if (Hls.isSupported() && videoRef.current) {
@@ -100,7 +146,7 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
     return () => {
       if (hls) hls.destroy();
     };
-  }, [camera, streamMode, hasError, retryKey, shouldLoad]);
+  }, [camera, effectiveStreamMode, hasError, retryKey, shouldLoad]);
 
   // ── Release stream on unmount / camera change ─────────
   useEffect(() => {
@@ -140,7 +186,7 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
             alt={camera.name || `Camera ${camera.camera_id}`}
             className="w-full h-full object-cover cursor-default opacity-50 transition-opacity duration-300"
           />
-        ) : streamMode === 'mjpeg' || streamMode === 'unknown' ? (
+        ) : effectiveStreamMode === 'mjpeg' || effectiveStreamMode === 'unknown' ? (
           <img
             key={`mjpeg-${camera.camera_id}-${retryKey}`}
             src={getStreamUrl(camera.camera_id)}
@@ -151,10 +197,11 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
         ) : (
           <video
             ref={videoRef}
-            className="w-full h-full object-cover cursor-default animate-in fade-in duration-300"
-            muted
+            className="w-full h-full object-contain bg-black cursor-default animate-in fade-in duration-300"
+            muted={!isLocalVideo}
             playsInline
-            autoPlay
+            controls={isLocalVideo}
+            autoPlay={!isLocalVideo}
             poster={getSnapshotUrl(camera.camera_id)}
           />
         )
@@ -181,6 +228,16 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
 
       {/* Hover controls (top-right) */}
       <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+        <button
+          onClick={handleToggleScan}
+          className={`p-1 text-white rounded backdrop-blur-sm transition-colors flex items-center gap-1 px-2
+            ${isScanning ? 'bg-success/80 hover:bg-success' : 'bg-black/50 hover:bg-black/70'}`}
+          title={isScanning ? "Stop AI Worker" : "Assign AI Worker"}
+        >
+          <Power className="w-3.5 h-3.5" />
+          <span className="text-xs font-medium">{isScanning ? 'Scanning' : 'Assign AI'}</span>
+        </button>
+
         {isFullscreen && (
           <button
             onClick={() => alert('Vehicle bounding system: To be implemented.')}

@@ -64,6 +64,10 @@ if not API_KEY:
     )
 API_PORT = int(os.getenv("API_PORT", "8002"))
 
+# --- Distributed Processing ---
+# Number of centralized GPU OCR workers to spawn. Each takes ~800MB VRAM.
+OCR_WORKER_COUNT = int(os.getenv("OCR_WORKER_COUNT", "5"))
+
 # --- Model paths ---
 # Prefer custom trained model if present, fallback to models/plate_yolov8n.pt or yolov8n.pt
 _default_trained_plate = BASE_DIR / "runs" / "detect" / "unified_alpr_v1-6" / "weights" / "best.pt"

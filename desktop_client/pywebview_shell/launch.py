@@ -27,7 +27,8 @@ class Api:
     def get_config(self):
         return {
             "API_KEY": config.API_KEY,
-            "API_BASE_URL": self._api_base_url
+            "API_BASE_URL": self._api_base_url,
+            "USE_EXTERNAL_CDN": not config.is_mock_mode()
         }
 
     def minimize(self):
@@ -92,6 +93,7 @@ class PyWebViewShell(BaseShell):
             win.evaluate_js(
                 f"window.API_KEY = {json.dumps(config.API_KEY)}; "
                 f"window.API_BASE_URL = {json.dumps(api_base_url)};"
+                f"window.USE_EXTERNAL_CDN = {json.dumps(not config.is_mock_mode())};"
             )
 
         webview.start(on_loaded, window, http_server=True)

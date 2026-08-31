@@ -158,6 +158,78 @@ class YoloPlateDetector(BaseDetector):
 
         return batch_boxes
 
+    def track(
+        self,
+        frame: np.ndarray,
+        persist: bool = True,
+        imgsz: int = 640,
+        conf: float = 0.25,
+        tracker: str = "bytetrack.yaml",
+    ) -> list[BoundingBox]:
+        """
+        Run detection with persistent ByteTrack tracking.
+
+        Uses Ultralytics' built-in ``model.track()`` which maintains
+        tracker state across calls when ``persist=True``.
+
+        Args:
+            frame:   BGR image (numpy array).
+            persist: Keep tracker state across calls (same video stream).
+            imgsz:   YOLO input resolution.
+            conf:    Minimum confidence threshold.
+            tracker: Tracker config file (shipped with ultralytics).
+
+        Returns:
+            List of BoundingBox with ``track_id`` populated.
+        """
+        if self.model is None:
+            logger.warning(
+                "YoloPlateDetector.track called but model is not loaded; "
+                "returning empty list."
+            )
+            return []
+
+        results = self.model.track(
+            frame,
+            device=self.device,
+            imgsz=imgsz,
+            conf=conf,
+            persist=persist,
+            tracker=tracker,
+            verbose=False,
+        )
+
+        tracked_boxes: list[BoundingBox] = []
+        if not results:
+            return tracked_boxes
+
+        for box in results[0].boxes:
+            x1, y1, x2, y2 = map(float, box.xyxy[0].tolist())
+            confidence = float(box.conf[0])
+            class_id = int(box.cls[0])
+            class_name = self.model.names.get(class_id, "unknown")
+
+            # box.id is a tensor of shape [1] when tracking is active,
+            # or None if the tracker hasn't assigned an ID yet.
+            track_id = None
+            if box.id is not None:
+                track_id = int(box.id[0])
+
+            tracked_boxes.append(
+                BoundingBox(
+                    x1=x1,
+                    y1=y1,
+                    x2=x2,
+                    y2=y2,
+                    confidence=confidence,
+                    class_id=class_id,
+                    class_name=class_name,
+                    track_id=track_id,
+                )
+            )
+
+        return tracked_boxes
+
     def get_config(self) -> dict[str, Any]:
         """Config snapshot for logging/debugging."""
         return {

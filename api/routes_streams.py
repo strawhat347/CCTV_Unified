@@ -553,11 +553,13 @@ def hls_release(camera_id: int, api_key: str = Query(...)):
 
 
 @router.get("/{camera_id}/hls/{filename}")
-def hls_segment(camera_id: int, filename: str, api_key: str = Query(...)):
+def hls_segment(camera_id: int, filename: str, api_key: Optional[str] = None):
     """
     GET /streams/{camera_id}/hls/{filename}?api_key=... — HLS segment file (.ts).
+    api_key is optional because HLS clients don't pass query params to segments.
     """
-    _verify_stream_api_key(api_key)
+    if api_key:
+        _verify_stream_api_key(api_key)
 
     if not FFMPEG_AVAILABLE:
         raise HTTPException(status_code=503, detail="HLS not available — ffmpeg not found")

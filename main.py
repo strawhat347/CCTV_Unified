@@ -1,59 +1,62 @@
-"""
-main.py - Entry point: wires sources -> detection -> alerting.
-
-Starts the FastAPI server and the background pipeline worker.
-"""
-
 import logging
-import multiprocessing as mp
-import time
-import os
-
-# Disable PaddleX's slow internet connectivity check for OCR models
-os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
+import sys
+from pathlib import Path
+import uvicorn
+import multiprocessing
 
 import config
-from pathlib import Path
+from pipeline.multiprocessing_workers import MasterOcrProcess, CameraFeederProcess
 
-import uvicorn
-
-import sys
-
-from pipeline.multiprocessing_workers import PipelineWorker
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
 logger = logging.getLogger("main")
 
-def run_pipeline_for_camera(camera_id: int, stream_url: str, name: str, source_type: str):
-    """Runs the pipeline for a single camera in a separate process."""
-    # Imports inside the function to avoid CUDA context sharing issues across processes
+def run_master_ocr(queue: multiprocessing.Queue, stop_event: multiprocessing.synchronize.Event):
+    from pipeline.detection_pipeline import CentralOcrWorker
+    from detection.paddle_ocr_engine import PaddleOcrEngine
     from alerting.rule_engine import RuleEngine
-    from db.connection_pool import get_pool
-    # IMPORT ORDER MATTERS ON WINDOWS: yolo (torch) must be imported before paddleocr 
-    # to avoid a WinError 127 DLL conflict with shm.dll.
-    from detection.yolo_plate_detector import YoloPlateDetector
-    from metrics.metrics_logger import MetricsLogger
-    from metrics.perf_counters import PerfCounter
-    from pipeline.detection_pipeline import DetectionPipeline
     from registry.mock_registry import MockRegistry
-    from sources.mock_video_source import MockVideoSource
-    from sources.rtsp_camera_source import RTSPCameraSource
 
-    logger.info(f"[{camera_id}] Initializing pipeline components...")
-    get_pool() # init db connection pool in this process
-
-    # 1. Registry & Rule Engine
+    logger.info("Initializing PaddleOCR (GPU/CPU) in Master process...")
+    ocr = PaddleOcrEngine()
+    ocr.load_model()
+    
+    # Fix PaddleOCR hijacking the root logger and silencing INFO logs
+    logging.getLogger().setLevel(logging.INFO)
+    
     registry = MockRegistry(config.SEED_REGISTRY_CSV)
-    registry.connect()
     rule_engine = RuleEngine(registry)
+    
+    worker = CentralOcrWorker(ocr, rule_engine, queue)
+    
+    # We use stop_event in a non-blocking loop via queue timeout
+    while not stop_event.is_set():
+        try:
+            payload = queue.get(timeout=1.0)
+            if payload is None:
+                break
+            worker._process_payload(payload)
+        except Exception as e:
+            if type(e).__name__ != 'Empty':
+                logger.error(f"Central OCR error: {e}")
 
-    # 2. Source
-    if source_type == "mock":
-        source = MockVideoSource(camera_id=camera_id, video_path=Path(stream_url), loop=False)
+def run_edge_feeder(camera_id: int, source_url: str, camera_name: str, mode: str, queue: multiprocessing.Queue, stop_event: multiprocessing.synchronize.Event):
+    from pipeline.detection_pipeline import CameraEdgeFeeder
+    from sources.rtsp_camera_source import RTSPCameraSource
+    import config
+    import os
+
+    if mode == "mock":
+        from sources.mock_video_source import MockVideoSource
+        video_path = os.path.join("data", "mock_videos", "high_res_test.mp4")
+        logger.info(f"Using mock video: {os.path.basename(video_path)}")
+        source = MockVideoSource(camera_id, video_path)
     else:
-        source = RTSPCameraSource(camera_id=camera_id, rtsp_url=stream_url)
+        source = RTSPCameraSource(camera_id, source_url)
 
-    # 3. Detectors
     if config.USE_HIERARCHICAL:
         from detection.hierarchical_detector import HierarchicalDetector
         detector = HierarchicalDetector(
@@ -66,45 +69,75 @@ def run_pipeline_for_camera(camera_id: int, stream_url: str, name: str, source_t
         from detection.yolo_plate_detector import YoloPlateDetector
         detector = YoloPlateDetector()
         detector.load_model(config.YOLO_MODEL_PATH)
-    
-    from detection.paddle_ocr_engine import PaddleOcrEngine
-    ocr = PaddleOcrEngine()
-    ocr.load_model()
 
-    # 4. Metrics
-    perf_counter = PerfCounter()
-    metrics_logger = MetricsLogger(perf_counter, interval=10)
-
-    # 5. Pipeline
-    pipeline = DetectionPipeline(
-        camera_id=camera_id,
-        source=source,
-        detector=detector,
-        ocr_engine=ocr,
-        rule_engine=rule_engine,
-        perf_counter=perf_counter,
-        sample_interval=10,
-        max_frames=None,  # run forever
-        save_crops=True,
-    )
-    pipeline.ensure_camera_row(
-        name=name,
-        stream_url=stream_url,
-    )
+    feeder = CameraEdgeFeeder(camera_id, source, detector, queue)
+    feeder.ensure_camera_row(camera_name, source_url)
     
-    logger.info(f"[{camera_id}] Starting pipeline execution...")
-    metrics_logger.start()
+    # Run the feeder in a non-blocking way with stop_event, or just pass stop_event to it?
+    # Actually feeder.run() has a while self._running loop.
+    # We can run it in a thread and wait on stop_event, or we can just pass stop_event to it.
+    # Let's pass stop_event to run() or just check it inside the loop.
+    
+    # Wait, the simplest fix is to just replace the broken loop here with the correct one:
+    logger.info(f"Edge Feeder {camera_id} starting loop.")
+    source.connect()
+    frame_idx = 0
     try:
-        pipeline.run()
+        while not stop_event.is_set():
+            frame = source.read_frame()
+            if frame is None:
+                logger.warning(f"Edge Feeder {camera_id} source ended.")
+                break
+                
+            frame_idx += 1
+            if frame_idx % feeder.sample_interval != 0:
+                feeder._finalize_stale_tracks(frame_idx)
+                continue
+                
+            active_tracks = feeder.detector.track(frame)
+            if active_tracks:
+                logger.info(f"Edge Feeder {camera_id} found {len(active_tracks)} tracks in frame {frame_idx}")
+            for box in active_tracks:
+                t_id = box.track_id if box.track_id is not None else id(box)
+                bbox = (int(box.x1), int(box.y1), int(box.x2), int(box.y2))
+                conf = float(box.confidence)
+                
+                h, w = frame.shape[:2]
+                y1, y2 = max(0, bbox[1]), min(h, bbox[3])
+                x1, x2 = max(0, bbox[0]), min(w, bbox[2])
+                
+                if y2 <= y1 or x2 <= x1:
+                    continue
+                    
+                crop = frame[y1:y2, x1:x2]
+                
+                is_sharp, sharpness = feeder.track_manager.is_sharp(crop)
+                was_blurry = not is_sharp
+                feeder.track_manager.update(t_id, crop, bbox, conf, frame_idx, sharpness, was_blurry)
+                
+            feeder._finalize_stale_tracks(frame_idx)
     finally:
-        metrics_logger.stop()
-
+        for ft in feeder.track_manager.flush_all():
+            feeder._push_to_queue(ft)
+        source.release()
 
 def main():
-    logger.info(f"CCTV Unified Surveillance MVP starting in '{config.MODE}' mode...")
+    multiprocessing.set_start_method('spawn')
+    logger.info(f"CCTV Unified MVP (Distributed Queue Mode) starting in '{config.MODE}' mode...")
     
-    # 1. Create pipeline workers based on mode
-    workers = []
+    # 1. Create the Shared OCR Queue
+    ocr_queue = multiprocessing.Queue()
+    
+    # 2. Spin up Master OCR Workers (The GPU Pool)
+    ocr_workers = []
+    logger.info(f"Spawning {config.OCR_WORKER_COUNT} Master OCR Workers...")
+    for _ in range(config.OCR_WORKER_COUNT):
+        worker = MasterOcrProcess(run_master_ocr, ocr_queue)
+        worker.start()
+        ocr_workers.append(worker)
+        
+    # 3. Create Camera Edge Feeders
+    camera_workers = []
     
     if config.is_mock_mode():
         camera_id = 1
@@ -113,14 +146,20 @@ def main():
         if videos:
             video_path = videos[0]
             logger.info(f"Using mock video: {video_path.name}")
+            
+            from db.dao_cameras import get_camera_by_id, insert_camera, update_camera
+            existing = get_camera_by_id(camera_id)
+            if not existing:
+                insert_camera(name="Gate Camera (mock)", stream_url=str(video_path), status="active")
+            elif existing.get("stream_url") != str(video_path):
+                update_camera(camera_id, {"stream_url": str(video_path)})
+                
         else:
             raise FileNotFoundError(f"No mock videos found in {video_dir}. Add .mp4 or .webm files.")
         
-        worker = PipelineWorker(run_pipeline_for_camera, camera_id, str(video_path), "Gate Camera (mock)", "mock")
-        workers.append(worker)
-        worker.start()
+        worker = CameraFeederProcess(run_edge_feeder, camera_id, str(video_path), "Gate Camera (mock)", "mock", ocr_queue)
+        camera_workers.append(worker)
     else:
-        # Real Mode: Fetch camera catalogue from Sentinel Grid
         logger.info("Fetching live camera catalogue from Sentinel API...")
         from clients.sentinel_client import SentinelClient
         from db.dao_cameras import get_camera_by_id, insert_camera
@@ -128,53 +167,44 @@ def main():
         client = SentinelClient(config.SENTINEL_API_HOST)
         cameras = client.get_cameras()
         
-        if not cameras:
-            logger.warning("No cameras found or failed to fetch catalogue.")
-            
-        for idx, cam in enumerate(cameras):
-            cam_id = int(cam.get("id", idx + 1))
-            stream_url = cam.get("rtsp_url") or cam.get("url")
-            name = cam.get("location") or f"Sentinel Camera {cam_id}"
-            
-            if stream_url:
-                # Sync to database so it appears in the frontend immediately
-                existing = get_camera_by_id(cam_id)
-                if not existing:
-                    try:
-                        cam_id = insert_camera(name=name, stream_url=stream_url, status="active", location=cam.get("location", ""), city=None, department_id=None)
-                        logger.info(f"Synced Sentinel Camera to DB: {name} as ID {cam_id}")
-                    except Exception as e:
-                        logger.error(f"Failed to sync camera to DB: {e}")
-                        continue  # skip if DB insert fails
-
-                # Prepare the worker
-                worker = PipelineWorker(run_pipeline_for_camera, cam_id, stream_url, name, "real")
-                workers.append(worker)
+        if cameras:
+            for idx, cam in enumerate(cameras):
+                cam_id = int(cam.get("id", idx + 1))
+                stream_url = cam.get("rtsp_url") or cam.get("url")
+                name = cam.get("location") or f"Sentinel Camera {cam_id}"
                 
-                # Start only the first 5 active workers to save resources
-                if len(workers) <= 5:
-                    worker.start()
+                if stream_url:
+                    existing = get_camera_by_id(cam_id)
+                    if not existing:
+                        try:
+                            cam_id = insert_camera(name=name, stream_url=stream_url, status="active", location=cam.get("location", ""), city=None, department_id=None)
+                        except Exception:
+                            continue
 
-    # 2. Start FastAPI app in main process
+                    worker = CameraFeederProcess(run_edge_feeder, cam_id, stream_url, name, "real", ocr_queue)
+                    camera_workers.append(worker)
+
     logger.info(f"Starting API server on port {config.API_PORT}...")
-    
-    # Inject workers into the app state so the API can check if they are running
     from api.main import app
-    app.state.workers = workers
+    # Inject camera workers into app state so they can be toggled via frontend
+    app.state.workers = camera_workers
+    app.state.ocr_workers = ocr_workers
+    app.state.ocr_queue = ocr_queue
     
     try:
         import os
         if os.path.exists("key.pem") and os.path.exists("cert.pem"):
-            logger.info("🔐 TLS Certificate found! Starting in HTTPS mode.")
+            logger.info("TLS Certificate found! Starting in HTTPS mode.")
             uvicorn.run("api.main:app", host="127.0.0.1", port=config.API_PORT, reload=False, ssl_keyfile="key.pem", ssl_certfile="cert.pem")
         else:
+            logger.info("No TLS certs found. Starting in HTTP mode.")
             uvicorn.run("api.main:app", host="127.0.0.1", port=config.API_PORT, reload=False)
-    except KeyboardInterrupt:
-        logger.info("Shutting down...")
     finally:
-        pass
-        # for w in workers:
-        #     w.stop()
+        logger.info("Shutting down... stopping all workers.")
+        for cw in camera_workers:
+            cw.stop()
+        for ow in ocr_workers:
+            ow.stop()
 
 if __name__ == "__main__":
     main()

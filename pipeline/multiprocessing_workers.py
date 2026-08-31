@@ -1,58 +1,91 @@
-"""
-pipeline/multiprocessing_workers.py - Step 6: Performance & Scale
-
-Runs the pipeline in a background process so the main process can run the API server.
-
-Windows uses the 'spawn' multiprocessing start method, which requires all
-arguments to be picklable. Since DetectionPipeline contains unpicklable
-objects (cv2.VideoCapture, YOLO models, PaddleOCR), we use a factory
-function pattern: the worker receives a *callable that builds* the pipeline
-inside the child process, rather than a pre-built pipeline instance.
-"""
-
 import multiprocessing
+import multiprocessing.synchronize
 import logging
-from typing import Callable
+from typing import Callable, Any
+from multiprocessing import Queue
 
-logger = logging.getLogger("multiprocessing_workers")
+logger = logging.getLogger("workers")
 
-
-class PipelineWorker:
-    def __init__(self, target: Callable, *args, **kwargs):
-        self.target = target
-        self.args = args
-        self.kwargs = kwargs
-        self.process = None
+class MasterOcrProcess:
+    def __init__(self, run_func: Callable[[Queue], None], ocr_queue: Queue):
+        self.run_func = run_func
+        self.ocr_queue = ocr_queue
+        self._process: multiprocessing.Process | None = None
         self._stop_event = multiprocessing.Event()
 
     def start(self):
-        logger.info("Starting pipeline worker process...")
-        self.process = multiprocessing.Process(
-            target=self._run_with_shutdown,
-            args=(self.target, self._stop_event) + self.args,
-            kwargs=self.kwargs,
+        if self._process is not None and self._process.is_alive():
+            logger.warning("Master OCR Process is already running.")
+            return
+
+        self._stop_event.clear()
+        self._process = multiprocessing.Process(
+            target=self._run_wrapper,
+            args=(self.run_func, self.ocr_queue, self._stop_event),
             daemon=True
         )
-        self.process.start()
-        logger.info(f"Pipeline worker started with PID: {self.process.pid}")
+        self._process.start()
+        logger.info(f"Master OCR Process started (PID: {self._process.pid})")
+
+    def stop(self):
+        self._stop_event.set()
+        if self._process is not None:
+            self._process.join(timeout=3.0)
+            if self._process.is_alive():
+                logger.warning(f"Master OCR Process {self._process.pid} hung. Terminating.")
+                self._process.terminate()
+            self._process = None
 
     @staticmethod
-    def _run_with_shutdown(target, stop_event, *args, **kwargs):
-        """Wrapper that passes the stop event to the target function."""
+    def _run_wrapper(run_func: Callable, queue: Queue, stop_event: multiprocessing.synchronize.Event):
         try:
-            target(*args, **kwargs)
-        except Exception:
-            logging.getLogger("multiprocessing_workers").exception(
-                "Pipeline worker crashed with unhandled exception"
-            )
+            run_func(queue, stop_event)
+        except KeyboardInterrupt:
+            pass
+        except Exception as e:
+            logger.exception(f"Fatal error in Master OCR worker: {e}")
 
-    def stop(self, timeout: float = 10.0):
-        if self.process and self.process.is_alive():
-            logger.info("Requesting graceful pipeline shutdown...")
-            self._stop_event.set()
-            self.process.join(timeout=timeout)
-            if self.process.is_alive():
-                logger.warning("Worker did not stop gracefully, terminating...")
-                self.process.terminate()
-                self.process.join()
-            logger.info("Pipeline worker stopped.")
+class CameraFeederProcess:
+    def __init__(self, run_func: Callable, camera_id: int, source_url: str, camera_name: str, mode: str, ocr_queue: Queue):
+        self.run_func = run_func
+        self.camera_id = camera_id
+        self.source_url = source_url
+        self.camera_name = camera_name
+        self.mode = mode
+        self.ocr_queue = ocr_queue
+        self._process: multiprocessing.Process | None = None
+        self._stop_event = multiprocessing.Event()
+
+    def start(self):
+        if self._process is not None and self._process.is_alive():
+            return
+        
+        self._stop_event.clear()
+        self._process = multiprocessing.Process(
+            target=self._run_wrapper,
+            args=(self.run_func, self.camera_id, self.source_url, self.camera_name, self.mode, self.ocr_queue, self._stop_event),
+            daemon=True
+        )
+        self._process.start()
+        logger.info(f"Camera Feeder {self.camera_id} started (PID: {self._process.pid})")
+
+    def stop(self):
+        self._stop_event.set()
+        if self._process is not None:
+            self._process.join(timeout=3.0)
+            if self._process.is_alive():
+                logger.warning(f"Feeder {self.camera_id} hung. Terminating.")
+                self._process.terminate()
+            self._process = None
+
+    def is_alive(self) -> bool:
+        return self._process is not None and self._process.is_alive()
+
+    @staticmethod
+    def _run_wrapper(run_func, camera_id, source_url, camera_name, mode, ocr_queue, stop_event):
+        try:
+            run_func(camera_id, source_url, camera_name, mode, ocr_queue, stop_event)
+        except KeyboardInterrupt:
+            pass
+        except Exception as e:
+            logger.exception(f"Fatal error in feeder {camera_id}: {e}")

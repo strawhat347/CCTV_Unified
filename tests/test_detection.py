@@ -107,12 +107,18 @@ class TestCropRegion:
 
 
 class FakeSource(BaseCameraSource):
-    """Yields a fixed number of dummy frames, then stops."""
+    """Yields a fixed number of dummy frames with edge content, then stops."""
 
     def __init__(self, num_frames: int = 30):
-        self._frames = [
-            np.zeros((480, 640, 3), dtype=np.uint8) for _ in range(num_frames)
-        ]
+        # Create frames with strong horizontal lines so they pass the
+        # Laplacian sharpness check in the tracking pipeline.
+        frames = []
+        for _ in range(num_frames):
+            frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            for y in range(0, 480, 4):
+                frame[y, :, :] = 255  # alternating bright lines
+            frames.append(frame)
+        self._frames = frames
         self._index = 0
         self._connected = False
 
@@ -135,16 +141,33 @@ class FakeSource(BaseCameraSource):
 
 
 class FakeDetector(BaseDetector):
-    """Returns one fixed bounding box for every frame."""
+    """Returns one fixed bounding box for every frame, with tracking support."""
 
     def __init__(self, boxes: list[BoundingBox] | None = None):
         self._boxes = boxes or [
             BoundingBox(x1=100, y1=200, x2=250, y2=260, confidence=0.92,
                         class_id=0, class_name="plate")
         ]
+        self._track_counter = 0
 
     def detect(self, frame: np.ndarray) -> list[BoundingBox]:
         return self._boxes
+
+    def track(self, frame: np.ndarray, persist: bool = True) -> list[BoundingBox]:
+        """Return boxes with track_id assigned.  Each unique box position
+        gets a stable track_id (simulates ByteTrack for tests)."""
+        # For simplicity in tests, assign track_id = 1 for each box
+        # (simulating a single tracked vehicle)
+        tracked = []
+        for box in self._boxes:
+            tracked.append(
+                BoundingBox(
+                    x1=box.x1, y1=box.y1, x2=box.x2, y2=box.y2,
+                    confidence=box.confidence, class_id=box.class_id,
+                    class_name=box.class_name, track_id=1,
+                )
+            )
+        return tracked
 
     def load_model(self, model_path: str) -> None:
         pass  # no-op — "model" is the hardcoded boxes
@@ -195,7 +218,9 @@ class TestDetectionPipeline:
     @patch("pipeline.detection_pipeline.get_camera_by_id", return_value={"name": "test", "status": "active"})
     @patch("pipeline.detection_pipeline.insert_camera", return_value=1)
     def test_pipeline_runs_end_to_end(self, mock_insert_cam, mock_get_cam, mock_insert_det):
-        """Pipeline should read all frames, process sampled ones, and write detections."""
+        """Pipeline should read all frames, process sampled ones, and write detections.
+        With tracking, all frames for the same track_id are aggregated into
+        a single finalized detection (written on shutdown flush)."""
         pipeline = self._build_pipeline(num_frames=30, sample_interval=10)
         pipeline.ensure_camera_row("test cam", "test://url")
         pipeline.run()
@@ -203,9 +228,9 @@ class TestDetectionPipeline:
         assert pipeline.stats["frames_read"] == 30
         # With interval=10, frames 10, 20, 30 get processed → 3
         assert pipeline.stats["frames_processed"] == 3
-        # Each processed frame yields 1 detection (from FakeDetector)
-        assert pipeline.stats["detections_written"] == 3
-        assert mock_insert_det.call_count == 3
+        # All 3 frames have the same track_id=1 → 1 finalized track
+        assert pipeline.stats["detections_written"] == 1
+        assert mock_insert_det.call_count == 1
 
     @patch("pipeline.detection_pipeline.insert_detection", return_value=1)
     @patch("pipeline.detection_pipeline.get_camera_by_id", return_value={"name": "test", "status": "active"})
@@ -243,8 +268,8 @@ class TestDetectionPipeline:
     def test_low_ocr_confidence_still_writes_detection(self, mock_insert_cam, mock_get_cam, mock_insert_det):
         """
         When OCR confidence is below threshold, detection should still be
-        written as 'plate_detected_no_ocr' (the plate was found, just
-        couldn't read the text).
+        written as 'plate_detected_no_ocr'.  With tracking, all 5 frames
+        for the same track_id aggregate into 1 finalized track.
         """
         low_ocr = FakeOcrEngine(text="???", confidence=0.1)
         pipeline = self._build_pipeline(
@@ -253,7 +278,8 @@ class TestDetectionPipeline:
         pipeline.ensure_camera_row("test cam", "test://url")
         pipeline.run()
 
-        assert pipeline.stats["detections_written"] == 5
+        # 1 finalized track (all 5 frames had track_id=1)
+        assert pipeline.stats["detections_written"] == 1
         assert pipeline.stats["ocr_reads"] == 0  # none above threshold
 
         # Verify the object_type in the DB call
@@ -265,7 +291,8 @@ class TestDetectionPipeline:
     @patch("pipeline.detection_pipeline.get_camera_by_id", return_value={"name": "test", "status": "active"})
     @patch("pipeline.detection_pipeline.insert_camera", return_value=1)
     def test_successful_ocr_writes_plate_text(self, mock_insert_cam, mock_get_cam, mock_insert_det):
-        """When OCR succeeds, object_type should be 'plate:<text>'."""
+        """When OCR succeeds, the finalized track should have plate_text set.
+        With tracking, all 5 frames aggregate into 1 finalized detection."""
         pipeline = self._build_pipeline(
             num_frames=5, sample_interval=1,
             ocr=FakeOcrEngine(text="GJ05CD6789", confidence=0.88)
@@ -274,9 +301,10 @@ class TestDetectionPipeline:
         pipeline.run()
 
         assert pipeline.stats["ocr_reads"] == 5
-        # Check the first call's plate_text
+        # 1 finalized track with consensus plate text
+        assert pipeline.stats["detections_written"] == 1
+        # Check the call's plate_text
         for call in mock_insert_det.call_args_list:
-            # insert_detection is called with keyword args
             assert call.kwargs.get("plate_text") == "GJ05CD6789"
 
     @patch("pipeline.detection_pipeline.insert_detection", return_value=1)

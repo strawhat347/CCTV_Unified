@@ -1,10 +1,30 @@
-import { useState } from 'react';
-import { X, Plus, Bell, ShieldAlert, Bot, RefreshCw } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { X, Plus, Bell, ShieldAlert, Bot, RefreshCw, Power } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
+import { toggleScan, fetchSystemStatus } from '../services/api';
 
 export default function Navbar({ alertCount = 0, onToggleAlertPanel, onToggleAIPanel, rightPanel, onOpenAddCamera }) {
   const [searchValue, setSearchValue] = useState('');
+  const [isScanning, setIsScanning] = useState(false);
   const location = useLocation();
+  
+  useEffect(() => {
+    // Initial fetch to sync button state with backend
+    fetchSystemStatus()
+      .then(status => setIsScanning(status.workers_active))
+      .catch(err => console.error("Failed to fetch system status:", err));
+  }, []);
+
+  const handleToggleScan = async () => {
+    const newState = !isScanning;
+    setIsScanning(newState);
+    try {
+      await toggleScan(newState);
+    } catch (err) {
+      console.error("Failed to toggle scan:", err);
+      setIsScanning(!newState); // revert on error
+    }
+  };
   
   const getPageTitle = () => {
     switch (location.pathname) {
@@ -89,6 +109,22 @@ export default function Navbar({ alertCount = 0, onToggleAlertPanel, onToggleAIP
           <button className="w-7 h-7 flex items-center justify-center rounded text-text-secondary hover:text-text-bright hover:bg-bg-hover transition-colors relative" title="Notifications">
             <Bell className="w-4 h-4" />
           </button>
+          
+          <button 
+            onClick={handleToggleScan} 
+            className={`flex items-center justify-center gap-1.5 px-2 h-7 rounded text-xs font-medium transition-colors ${
+              isScanning 
+                ? 'text-danger bg-danger/10 hover:bg-danger/20 border border-danger/20' 
+                : 'text-text-secondary hover:text-accent hover:bg-bg-hover'
+            }`}
+            title={isScanning ? "Stop Scanning" : "Start Scanning"}
+          >
+            <Power className="w-3.5 h-3.5" />
+            <span>{isScanning ? 'Scanning' : 'Standby'}</span>
+          </button>
+
+          <div className="h-4 w-[1px] bg-border-primary mx-1" />
+
           <button onClick={onToggleAIPanel} className={`w-7 h-7 flex items-center justify-center rounded transition-colors relative ${rightPanel === 'ai' ? 'text-accent bg-bg-active' : 'text-text-secondary hover:text-accent hover:bg-bg-hover'}`} title="AI Assistant">
             <Bot className="w-4 h-4" />
           </button>

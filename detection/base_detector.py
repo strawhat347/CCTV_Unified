@@ -31,6 +31,7 @@ class BoundingBox:
         confidence: float,
         class_id: int,
         class_name: str = "",
+        track_id: int | None = None,
     ):
         self.x1 = x1
         self.y1 = y1
@@ -39,12 +40,14 @@ class BoundingBox:
         self.confidence = confidence
         self.class_id = class_id
         self.class_name = class_name
+        self.track_id = track_id
 
     def __repr__(self) -> str:
         return (
             f"BoundingBox(x1={self.x1}, y1={self.y1}, x2={self.x2}, "
             f"y2={self.y2}, confidence={self.confidence:.2f}, "
-            f"class_id={self.class_id}, class_name='{self.class_name}')"
+            f"class_id={self.class_id}, class_name='{self.class_name}', "
+            f"track_id={self.track_id})"
         )
 
 
@@ -82,6 +85,26 @@ class BaseDetector(ABC):
         when the (potentially expensive) model load happens.
         """
         raise NotImplementedError
+
+    def track(
+        self,
+        frame: np.ndarray,
+        persist: bool = True,
+    ) -> list[BoundingBox]:
+        """
+        Run detection with persistent object tracking on a single frame.
+
+        Returns a list of BoundingBox objects with ``track_id`` populated.
+        Implementations that don't support tracking should fall back to
+        ``detect()`` with ``track_id=None``.
+
+        Args:
+            frame:   A numpy array representing the image (BGR from OpenCV).
+            persist: If True, maintain tracker state across calls (same video
+                     stream). Set False to reset tracker state.
+        """
+        # Default: fall back to plain detection (no tracking).
+        return self.detect(frame)
 
     def get_config(self) -> dict[str, Any]:
         """

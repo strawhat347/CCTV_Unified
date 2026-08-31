@@ -122,7 +122,7 @@ export default function LiveLogs() {
               Clear Logs
             </button>
             <button 
-              onClick={loadLogs}
+              onClick={() => loadLogs()}
               disabled={loading}
               className="flex items-center gap-2 px-3 py-1.5 bg-bg-secondary border border-border-primary rounded-md text-text-primary hover:bg-bg-hover transition-colors text-sm font-medium"
             >
@@ -166,6 +166,7 @@ export default function LiveLogs() {
               ) : (
                 <tr>
                   <th className="px-4 py-3 font-semibold">Time</th>
+                  <th className="px-4 py-3 font-semibold">Image</th>
                   <th className="px-4 py-3 font-semibold">Object</th>
                   <th className="px-4 py-3 font-semibold">Confidence</th>
                   <th className="px-4 py-3 font-semibold">Camera ID</th>
@@ -210,6 +211,17 @@ export default function LiveLogs() {
                   ) : (
                     <tr key={log.detection_id} className="hover:bg-bg-hover/50 transition-colors">
                       <td className="px-4 py-2.5 text-text-secondary">{formatTime(log.detected_at)}</td>
+                      <td className="px-4 py-2.5">
+                        {log.image_path ? (
+                          <img 
+                            src={`http://127.0.0.1:8002/crops/${log.image_path.split(/\\|\//).pop()}`} 
+                            alt="Detection Crop" 
+                            className="h-10 object-cover rounded border border-border-primary"
+                          />
+                        ) : (
+                          <span className="text-text-muted text-xs">No image</span>
+                        )}
+                      </td>
                       <td className="px-4 py-2.5 font-medium text-text-primary capitalize">{log.object_type}</td>
                       <td className="px-4 py-2.5 text-text-secondary">{(log.confidence * 100).toFixed(1)}%</td>
                       <td className="px-4 py-2.5 text-text-primary">Cam #{log.camera_id}</td>

@@ -19,6 +19,7 @@ export async function waitForApi() {
           const config = await window.pywebview.api.get_config();
           window.API_KEY = config.API_KEY;
           window.API_BASE_URL = config.API_BASE_URL;
+          window.USE_EXTERNAL_CDN = config.USE_EXTERNAL_CDN;
           resolve();
         } catch (e) {
           console.error("Failed to get config from python", e);
@@ -184,17 +185,22 @@ export function connectAlertWebSocket(onMessage, onError, onClose) {
 // ── Streams (Video Wall) ─────────────────────────────────
 /**
  * Get the stream URL for a camera.
- * We bypass the backend and hit the progressive MP4 endpoint on live.corp8.cloud!
  */
 export function getStreamUrl(cameraId) {
-  return `https://live.corp8.cloud/stream/${cameraId}`;
+  if (window.USE_EXTERNAL_CDN) {
+    return `https://live.corp8.cloud/stream/${cameraId}`;
+  }
+  return `${getApiBase()}/streams/${cameraId}/mjpeg?api_key=${encodeURIComponent(getApiKey() || "")}`;
 }
 
 /**
  * Get the HLS playlist URL for a camera.
  */
 export function getHlsUrl(cameraId) {
-  return `https://live.corp8.cloud/live/stream/${cameraId}/index.m3u8`;
+  if (window.USE_EXTERNAL_CDN) {
+    return `https://live.corp8.cloud/live/stream/${cameraId}/index.m3u8`;
+  }
+  return `${getApiBase()}/streams/${cameraId}/hls/stream.m3u8?api_key=${encodeURIComponent(getApiKey() || "")}`;
 }
 
 /**
@@ -208,8 +214,19 @@ export function getSnapshotUrl(cameraId) {
  * Fetch the active streaming mode (hls or mjpeg).
  */
 export async function fetchStreamMode() {
-  // Use the progressive MP4 endpoint from the Sentinel Cloud CDN since HLS is throwing 502
-  return { mode: 'mp4' };
+  await waitForApi();
+  if (window.USE_EXTERNAL_CDN) {
+    return { mode: 'mp4' };
+  }
+  try {
+    const res = await fetch(`${getApiBase()}/streams/mode`, { headers: getHeaders() });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (e) {
+    console.error("Failed to fetch stream mode", e);
+  }
+  return { mode: 'mjpeg' };
 }
 
 /**
@@ -247,6 +264,34 @@ export async function fetchSystemStatus() {
   await waitForApi();
   const res = await fetch(`${getApiBase()}/system/status`, { headers: getHeaders() });
   if (!res.ok) throw new Error(`GET /system/status failed: ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Start or stop backend scanning workers.
+ */
+export async function toggleScan(scanning) {
+  await waitForApi();
+  const res = await fetch(`${getApiBase()}/system/scan`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ scanning }),
+  });
+  if (!res.ok) throw new Error(`POST /system/scan failed: ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Start or stop the backend scanning worker for a specific camera.
+ */
+export async function toggleCameraScan(cameraId, scanning) {
+  await waitForApi();
+  const res = await fetch(`${getApiBase()}/system/scan/${cameraId}`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ scanning }),
+  });
+  if (!res.ok) throw new Error(`POST /system/scan/${cameraId} failed: ${res.status}`);
   return res.json();
 }
 

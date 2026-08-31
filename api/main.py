@@ -22,6 +22,7 @@ import secrets
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 import os
 
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -141,6 +142,14 @@ app.include_router(detections_router)
 app.include_router(alerts_router)
 app.include_router(streams_router)
 
+# Mount the crops directory so the frontend can display the raw detection images
+os.makedirs("data/crops", exist_ok=True)
+app.mount("/crops", StaticFiles(directory="data/crops"), name="crops")
+
+# Mount the mock_videos directory so the frontend can play local videos directly with a native media player
+os.makedirs("data/mock_videos", exist_ok=True)
+app.mount("/videos", StaticFiles(directory="data/mock_videos"), name="videos")
+
 
 @app.get("/health", tags=["health"])
 def health_check():
@@ -153,5 +162,53 @@ def health_check():
 def system_status(request: Request):
     """Returns the current status of the backend, including whether pipeline workers are active."""
     workers = getattr(app.state, "workers", [])
-    any_active = any(w.is_alive() for w in workers)
-    return {"workers_active": any_active, "worker_count": len(workers)}
+    active_cameras = [w.camera_id for w in workers if w.is_alive()]
+    any_active = len(active_cameras) > 0
+    return {"workers_active": any_active, "worker_count": len(workers), "active_cameras": active_cameras}
+
+from pydantic import BaseModel
+class ScanToggleRequest(BaseModel):
+    scanning: bool
+
+@app.post("/system/scan", tags=["system"])
+@limiter.exempt
+def toggle_scan(request: Request, body: ScanToggleRequest):
+    """Starts or stops the pipeline workers."""
+    workers = getattr(app.state, "workers", [])
+    
+    if body.scanning:
+        # Start up to 5 camera workers if not already running
+        started = 0
+        for w in workers:
+            if not w.is_alive():
+                logger.info(f"API: Starting worker for Camera {w.camera_id}")
+                w.start()
+                started += 1
+            if started >= 5:
+                break
+        return {"status": "started"}
+    else:
+        # Stop all workers
+        for w in workers:
+            w.stop()
+        return {"status": "stopped"}
+
+@app.post("/system/scan/{camera_id}", tags=["system"])
+@limiter.exempt
+def toggle_scan_camera(camera_id: int, request: Request, body: ScanToggleRequest):
+    """Starts or stops the pipeline worker for a specific camera."""
+    workers = getattr(app.state, "workers", [])
+    for w in workers:
+        if getattr(w, "camera_id", None) == camera_id:
+            if body.scanning:
+                if not w.is_alive():
+                    logger.info(f"API: Starting worker for Camera {camera_id}")
+                    w.start()
+                return {"status": "started", "camera_id": camera_id}
+            else:
+                if w.is_alive():
+                    logger.info(f"API: Stopping worker for Camera {camera_id}")
+                    w.stop()
+                return {"status": "stopped", "camera_id": camera_id}
+    
+    raise HTTPException(status_code=404, detail="Worker for camera not found")
