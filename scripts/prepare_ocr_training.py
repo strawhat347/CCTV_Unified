@@ -68,7 +68,7 @@ def main():
   character_dict_path: ppocr/utils/en_dict.txt
   max_text_length: 25
   infer_mode: false
-  use_space_char: false
+  use_space_char: true
   save_res_path: ./output/predicts_custom.txt
 
 Optimizer:

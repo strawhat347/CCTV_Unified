@@ -28,6 +28,7 @@ def run_master_ocr(queue: multiprocessing.Queue, stop_event: multiprocessing.syn
     logging.getLogger().setLevel(logging.INFO)
     
     registry = MockRegistry(config.SEED_REGISTRY_CSV)
+    registry.connect()
     rule_engine = RuleEngine(registry)
     
     worker = CentralOcrWorker(ocr, rule_engine, queue)
@@ -53,7 +54,7 @@ def run_edge_feeder(camera_id: int, source_url: str, camera_name: str, mode: str
         from sources.mock_video_source import MockVideoSource
         video_path = os.path.join("data", "mock_videos", "high_res_test.mp4")
         logger.info(f"Using mock video: {os.path.basename(video_path)}")
-        source = MockVideoSource(camera_id, video_path)
+        source = MockVideoSource(camera_id, video_path, loop=False)
     else:
         source = RTSPCameraSource(camera_id, source_url)
 
@@ -73,12 +74,6 @@ def run_edge_feeder(camera_id: int, source_url: str, camera_name: str, mode: str
     feeder = CameraEdgeFeeder(camera_id, source, detector, queue)
     feeder.ensure_camera_row(camera_name, source_url)
     
-    # Run the feeder in a non-blocking way with stop_event, or just pass stop_event to it?
-    # Actually feeder.run() has a while self._running loop.
-    # We can run it in a thread and wait on stop_event, or we can just pass stop_event to it.
-    # Let's pass stop_event to run() or just check it inside the loop.
-    
-    # Wait, the simplest fix is to just replace the broken loop here with the correct one:
     logger.info(f"Edge Feeder {camera_id} starting loop.")
     source.connect()
     frame_idx = 0
@@ -87,6 +82,12 @@ def run_edge_feeder(camera_id: int, source_url: str, camera_name: str, mode: str
             frame = source.read_frame()
             if frame is None:
                 logger.warning(f"Edge Feeder {camera_id} source ended.")
+                try:
+                    from db.redis_registry import registry
+                    registry.connect()
+                    registry.set_camera_active(camera_id, False)
+                except Exception as ex:
+                    logger.error(f"Failed to unregister camera {camera_id}: {ex}")
                 break
                 
             frame_idx += 1
@@ -96,7 +97,7 @@ def run_edge_feeder(camera_id: int, source_url: str, camera_name: str, mode: str
                 
             active_tracks = feeder.detector.track(frame)
             if active_tracks:
-                logger.info(f"Edge Feeder {camera_id} found {len(active_tracks)} tracks in frame {frame_idx}")
+                logger.debug(f"Edge Feeder {camera_id} found {len(active_tracks)} tracks in frame {frame_idx}")
             for box in active_tracks:
                 t_id = box.track_id if box.track_id is not None else id(box)
                 bbox = (int(box.x1), int(box.y1), int(box.x2), int(box.y2))

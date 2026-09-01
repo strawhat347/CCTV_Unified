@@ -104,8 +104,9 @@ async def verify_api_key(request: Request, call_next):
     if request.url.path.startswith("/streams/"):
         return await call_next(request)
 
-    api_key = request.headers.get("X-API-Key")
+    api_key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
     if not api_key or not secrets.compare_digest(api_key, API_KEY):
+        logger.error(f"API Key mismatch! Got: {api_key}, Expected: {API_KEY}, Path: {request.url.path}")
         # Security: Return generic 401 Unauthorized for missing/bad keys
         return JSONResponse(status_code=401, content={"detail": "Unauthorized: Invalid API Key"})
 

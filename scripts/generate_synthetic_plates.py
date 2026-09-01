@@ -1,129 +1,241 @@
 import os
 import random
-import cv2
+import string
 import numpy as np
+import cv2
 from PIL import Image, ImageDraw, ImageFont
+import multiprocessing
+from functools import partial
 from pathlib import Path
+from tqdm import tqdm
 
 # --- Configuration ---
-NUM_IMAGES = 50000  # Default to 500 for a quick test. Scale up to 50000 for actual training.
-OUTPUT_DIR = Path("data/synthetic_plates")
-FONT_PATH = "data/fonts/CharlesWright-Bold.otf" # Standard HSRP-like font
+NUM_IMAGES = 60000  # 30k GJ + 10k BH + 20k Other
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+OUTPUT_DIR = PROJECT_ROOT / "data" / "synthetic_plates" / "images"
+GT_FILE = PROJECT_ROOT / "data" / "synthetic_plates" / "rec_gt.txt"
+FONT_PATH = PROJECT_ROOT / "data" / "fonts" / "CharlesWright-Bold.otf"
 
-STATES = ["GJ", "MH", "DL", "KA", "TN", "UP", "HR", "WB"]
-# We specifically inject hard-to-read letters to force the model to learn the difference
-HARD_LETTERS = ['W', 'M', 'O', 'D', 'B', '8', '0', 'Q', 'C']
+# Ensure directories exist
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-def generate_random_plate() -> str:
-    """Generate a valid Indian license plate string heavily weighted with confusing characters."""
-    state = random.choice(STATES)
-    district = f"{random.randint(1, 99):02d}"
+# Load Font globally for worker processes
+try:
+    plate_font = ImageFont.truetype(str(FONT_PATH), 70)
+except Exception as e:
+    print(f"Error loading Charles Wright font: {e}")
+    plate_font = ImageFont.load_default()
+
+def generate_text():
+    """Generates strictly compliant Indian plate syntaxes based on true RTO limits."""
+    # Exact RTO max limits per state
+    state_rto_limits = {
+        'MH': 50, 'DL': 13, 'KA': 71, 'HR': 99, 
+        'UP': 96, 'RJ': 58, 'TN': 99, 'KL': 86, 'MP': 74
+    }
     
-    series_len = random.randint(1, 2)
-    series = "".join(random.choice(HARD_LETTERS) for _ in range(series_len))
+    # Weights: GJ (50%), BH (16.6%), Other (33.4%)
+    plate_type = random.choices(['GJ', 'BH', 'OTHER'], weights=[50, 16.6, 33.4], k=1)[0]
     
-    # Make sure we occasionally inject 8s and 0s into the digits
-    number = ""
-    for _ in range(4):
-        if random.random() > 0.7:
-            number += random.choice(['8', '0'])
+    # 'I' and 'O' are legally banned in Indian plate series letters, so we remove them
+    valid_letters = [c for c in string.ascii_uppercase if c not in ('I', 'O')]
+    
+    # Only keep legal confounding pairs (I and O are banned in series)
+    # Added extended pairs to cover all common OCR failure cases in Charles Wright font
+    confounding_pairs = [
+        ('8', 'B'), ('3', 'E'), ('2', 'Z'), ('5', 'S'), ('0', 'D'),
+        ('6', 'G'), ('7', 'T'), ('0', 'Q'), ('0', 'C'), ('1', 'T'),
+        ('9', 'P'), ('4', 'A'), ('8', 'R')
+    ]
+    use_confusing = random.random() > 0.5
+    num_char, let_char = random.choice(confounding_pairs)
+
+    if plate_type == 'BH':
+        year = random.randint(21, 24)
+        
+        number_chars = []
+        for _ in range(4):
+            if use_confusing and random.random() > 0.4:
+                number_chars.append(num_char)
+            else:
+                number_chars.append(str(random.randint(0,9)))
+        number = "".join(number_chars)
+        
+        # Enforce strict 2-letter series
+        series_len = 2
+        series_chars = []
+        for _ in range(series_len):
+            if use_confusing and random.random() > 0.4:
+                series_chars.append(let_char)
+            else:
+                series_chars.append(random.choice(valid_letters))
+        series = "".join(series_chars)
+        
+        return f"{year} BH {number} {series}"
+        
+    else:
+        if plate_type == 'GJ':
+            state = "GJ"
+            rto_max = 38
         else:
-            number += str(random.randint(1, 9))
+            state = random.choice(list(state_rto_limits.keys()))
+            rto_max = state_rto_limits[state]
             
-    return f"{state}{district}{series}{number}"
+        rto = f"{random.randint(1, rto_max):02d}"
+        
+        # Enforce strict 2-letter series
+        series_len = 2
+        series_chars = []
+        for _ in range(series_len):
+            if use_confusing and random.random() > 0.4:
+                series_chars.append(let_char)
+            else:
+                series_chars.append(random.choice(valid_letters))
+        series = "".join(series_chars)
+        
+        number_chars = []
+        for _ in range(4):
+            if use_confusing and random.random() > 0.4:
+                number_chars.append(num_char)
+            else:
+                number_chars.append(str(random.randint(0,9)))
+        number = "".join(number_chars)
+            
+        return f"{state} {rto} {series} {number}"
 
-def apply_cctv_degradation(img: np.ndarray) -> np.ndarray:
-    """Simulate bad CCTV conditions: blur, noise, and harsh shadows."""
-    # 1. Random Motion/Gaussian Blur
+def apply_real_world_degradation(cv_img):
+    h, w = cv_img.shape[:2]
+
+    # 1. Perspective Warp (Simulating camera angle)
+    src_pts = np.float32([[0, 0], [w, 0], [0, h], [w, h]])
+    max_shift = 15
+    dst_pts = np.float32([
+        [random.randint(0, max_shift), random.randint(0, max_shift)],
+        [w - random.randint(0, max_shift), random.randint(0, max_shift)],
+        [random.randint(0, max_shift), h - random.randint(0, max_shift)],
+        [w - random.randint(0, max_shift), h - random.randint(0, max_shift)]
+    ])
+    M = cv2.getPerspectiveTransform(src_pts, dst_pts)
+    cv_img = cv2.warpPerspective(cv_img, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
+
+    # 2. Shadows (Bumper overhang or uneven lighting)
     if random.random() > 0.3:
-        k = random.choice([3, 5])
-        img = cv2.GaussianBlur(img, (k, k), 0)
+        shadow = np.zeros((h, w, 3), dtype=np.uint8)
+        # Create a random dark polygon
+        pt1 = (random.randint(0, w), 0)
+        pt2 = (random.randint(0, w), h)
+        pt3 = (0, h)
+        pt4 = (0, 0)
+        pts = np.array([pt1, pt2, pt3, pt4])
+        cv2.fillPoly(shadow, [pts], (1, 1, 1))
         
-    # 2. Sensor Grain (Gaussian Noise)
+        alpha = random.uniform(0.3, 0.7)
+        # Apply shadow only where polygon is
+        cv_img = np.where(shadow == 1, cv2.addWeighted(cv_img, alpha, np.zeros_like(cv_img), 0, 0), cv_img)
+
+    # 3. Brightness & Contrast (Night vs Sun Glare)
+    is_night = random.random() > 0.5
+    if is_night:
+        alpha_c = random.uniform(0.4, 0.8) # Lower contrast
+        beta_c = random.randint(-60, -10)  # Darker
+    else:
+        alpha_c = random.uniform(1.0, 1.4) # Higher contrast
+        beta_c = random.randint(10, 60)    # Brighter (Glare)
+    cv_img = cv2.convertScaleAbs(cv_img, alpha=alpha_c, beta=beta_c)
+
+    # 4. Dirt, Mud, & Covered Edges
     if random.random() > 0.4:
-        row, col, ch = img.shape
-        mean = 0
-        sigma = random.randint(15, 35)
-        gauss = np.random.normal(mean, sigma, (row, col, ch)).reshape(row, col, ch)
-        img = np.clip(img + gauss, 0, 255).astype(np.uint8)
-        
-    # 3. Harsh Shadows / Gradient Lighting
-    if random.random() > 0.3:
-        shadow = np.zeros_like(img, dtype=np.float32)
-        alpha = random.uniform(0.4, 0.9)
-        for i in range(img.shape[1]):
-            shadow[:, i] = alpha * (i / img.shape[1])
-            
-        # 50% chance the shadow comes from the left instead of right
-        if random.random() > 0.5:
-            shadow = np.fliplr(shadow)
-            
-        img = np.clip(img * (1 - shadow), 0, 255).astype(np.uint8)
-        
-    return img
+        for _ in range(random.randint(2, 8)):
+            cx, cy = random.randint(0, w), random.randint(0, h)
+            radius = random.randint(3, 12)
+            color = (random.randint(20,50), random.randint(30,60), random.randint(40,70)) # Dirt brown/grey
+            cv2.circle(cv_img, (cx, cy), radius, color, -1)
+            # Blur the dirt so it looks organic
+            cv_img = cv2.GaussianBlur(cv_img, (5, 5), 0)
+
+    # 5. Gaussian Noise (Cheap Camera Static) & Motion Blur
+    mean = 0
+    var = random.randint(5, 30)
+    sigma = var**0.5
+    gauss = np.random.normal(mean, sigma, (h, w, 3)).astype(np.float32)
+    cv_img = cv_img.astype(np.float32) + gauss
+    cv_img = np.clip(cv_img, 0, 255).astype(np.uint8)
+
+    # Motion Blur
+    if random.random() > 0.5:
+        k_size = random.choice([3, 5, 7])
+        kernel = np.zeros((k_size, k_size))
+        kernel[int((k_size-1)/2), :] = np.ones(k_size)
+        kernel /= k_size
+        cv_img = cv2.filter2D(cv_img, -1, kernel)
+
+    return cv_img
+
+def generate_single_image(idx):
+    text = generate_text()
+    
+    # Standard elongated plate dimensions (matches OCR input size aspect ratio)
+    width, height = 700, 150
+    
+    # 70% White (Private), 30% Yellow (Commercial)
+    bg_color = (255, 255, 255) if random.random() > 0.3 else (255, 215, 0)
+    
+    img_pil = Image.new('RGB', (width, height), color=bg_color)
+    draw = ImageDraw.Draw(img_pil)
+    
+    # Draw standard black border
+    draw.rectangle([0, 0, width-1, height-1], outline="black", width=4)
+    
+    # Center text
+    bbox = draw.textbbox((0,0), text, font=plate_font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    
+    # Sometimes fonts have negative offsets (bearings) that shift them left
+    x = (width - text_w) / 2 - bbox[0]
+    y = (height - text_h) / 2 - bbox[1] - 8 # Slight vertical offset adjustment for Charles Wright
+    
+    draw.text((x, y), text, fill="black", font=plate_font)
+    
+    # Convert to OpenCV for advanced degradation
+    cv_img = np.array(img_pil)
+    cv_img = cv_img[:, :, ::-1].copy() # RGB to BGR
+    
+    # Apply heavy real-world effects
+    final_cv_img = apply_real_world_degradation(cv_img)
+    
+    # Save Image
+    filename = f"syn_{idx:06d}.jpg"
+    filepath = OUTPUT_DIR / filename
+    cv2.imwrite(str(filepath), final_cv_img)
+    
+    # Return formatted ground truth line for PaddleOCR
+    # Format: relative_path\tLABEL\n
+    return f"images/{filename}\t{text}\n"
 
 def main():
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    images_dir = OUTPUT_DIR / "images"
-    images_dir.mkdir(exist_ok=True)
+    print(f"Starting advanced synthetic generation of {NUM_IMAGES} images...")
+    print(f"Using font: {FONT_PATH.name}")
+    print(f"Output directory: {OUTPUT_DIR}")
     
-    label_file = OUTPUT_DIR / "rec_gt.txt"
+    # Multiprocessing for speed
+    num_cores = max(1, multiprocessing.cpu_count() - 1)
+    print(f"Running on {num_cores} CPU cores...")
     
-    # Try to load the HSRP font, fallback to default if not downloaded yet
-    try:
-        font = ImageFont.truetype(FONT_PATH, 80)
-        print(f"Loaded custom font: {FONT_PATH}")
-    except IOError:
-        print(f"WARNING: Font not found at {FONT_PATH}.")
-        print("Using default font. For actual training, please download a 'Charles Wright' TTF font!")
-        font = ImageFont.load_default()
+    gt_lines = []
+    
+    # Use ProcessPoolExecutor for massive parallelism
+    with multiprocessing.Pool(processes=num_cores) as pool:
+        # Wrap with tqdm for a beautiful progress bar
+        for result in tqdm(pool.imap(generate_single_image, range(NUM_IMAGES)), total=NUM_IMAGES):
+            gt_lines.append(result)
+            
+    # Save Ground Truth text file
+    with open(GT_FILE, 'w', encoding='utf-8') as f:
+        f.writelines(gt_lines)
         
-    print(f"Generating {NUM_IMAGES} synthetic plates...")
-    
-    with open(label_file, "w", encoding="utf-8") as f:
-        for i in range(NUM_IMAGES):
-            plate_text = generate_random_plate()
-            
-            # Create a blank white or yellow plate
-            bg_color = (255, 204, 0) if random.random() > 0.5 else (255, 255, 255)
-            width, height = 420, 110
-            img_pil = Image.new('RGB', (width, height), color=bg_color)
-            draw = ImageDraw.Draw(img_pil)
-            
-            # Center the text
-            try:
-                bbox = font.getbbox(plate_text)
-                text_w = bbox[2] - bbox[0]
-                text_h = bbox[3] - bbox[1]
-            except AttributeError:
-                # Fallback for older PIL versions
-                text_w, text_h = draw.textsize(plate_text, font=font)
-                
-            x = (width - text_w) / 2
-            y = (height - text_h) / 2 - 5
-            
-            # Draw black text
-            draw.text((x, y), plate_text, fill=(0, 0, 0), font=font)
-            
-            # Convert PIL RGB to OpenCV BGR
-            img_cv = np.array(img_pil)[:, :, ::-1].copy()
-            
-            # Apply mathematical damage (blur/shadows)
-            img_cv = apply_cctv_degradation(img_cv)
-            
-            # Save the image
-            filename = f"synthetic_{i:05d}.jpg"
-            filepath = images_dir / filename
-            cv2.imwrite(str(filepath), img_cv)
-            
-            # Write to PaddleOCR label file: filename[tab]label
-            f.write(f"images/{filename}\t{plate_text}\n")
-            
-            if (i + 1) % 100 == 0:
-                print(f"  -> Generated {i + 1}/{NUM_IMAGES} images...")
-                
-    print(f"\nDONE! {NUM_IMAGES} synthetic plates saved in: {OUTPUT_DIR}")
-    print(f"PaddleOCR training label file saved at: {label_file}")
+    print(f"\nDone! Generated {NUM_IMAGES} images.")
+    print(f"Ground truth saved to: {GT_FILE}")
 
 if __name__ == "__main__":
     main()

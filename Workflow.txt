@@ -370,6 +370,13 @@ TODO: CRITICAL DEMO FIXES (Immediate Next Steps, after step 10)
     instead of strict equality. If PaddleOCR misreads '8' as 'B' (85% match),
     it still triggers a "Probable Match" alert.
 
+[ ] Implement Triage Architecture (Fast vs Heavy Routing):
+    Refactor `pipeline/stream_manager.py` and OCR worker pools to create two queues.
+    Edge Feeder calculates crop Laplacian variance (blur score).
+    Crisp plates route to 2 Fast Workers (Lightweight OCR).
+    Blurry plates route to 3 Heavy Workers (Super-Resolution + Heavy VLM/OCR) 
+    to balance max FPS with maximum accuracy on bad crops.
+
 [ ] Train Custom YOLO Model (Deferred):
     Run scripts/train_plate_model.py on the 18k Indian plates dataset when
     time permits to replace yolov8n.pt.

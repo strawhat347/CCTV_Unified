@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Hls from 'hls.js';
-import { Video, X, Maximize2, Minimize2, ChevronLeft, RefreshCw, AlertTriangle, Power } from 'lucide-react';
-import { getStreamUrl, getHlsUrl, getSnapshotUrl, releaseStream, toggleCameraScan, fetchSystemStatus } from '../services/api';
+import { Video, X, Maximize2, Minimize2, ChevronLeft, RefreshCw, AlertTriangle, Power, Play, Pause, Rewind, FastForward } from 'lucide-react';
+import { getStreamUrl, getHlsUrl, getSnapshotUrl, releaseStream, toggleCameraScan, fetchSystemStatus, getApiBase, getApiKey } from '../services/api';
 
 /**
  * VideoCell — Individual grid cell in the Fluid Video Wall.
@@ -14,9 +14,33 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [shouldLoad, setShouldLoad] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(true);
+  const [progress, setProgress] = useState(0);
   const isTogglingRef = useRef(false);
   const videoRef = useRef(null);
   const cellRef = useRef(null);
+
+  const handleSeekBg = (e) => {
+    if (!videoRef.current || !videoRef.current.duration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pct = (e.clientX - rect.left) / rect.width;
+    videoRef.current.currentTime = pct * videoRef.current.duration;
+  };
+
+  const togglePlay = () => {
+    if (!videoRef.current) return;
+    if (isPlaying) {
+      videoRef.current.pause();
+    } else {
+      videoRef.current.play().catch(() => {});
+    }
+  };
+
+  const seek = (seconds) => {
+    if (videoRef.current) {
+      videoRef.current.currentTime += seconds;
+    }
+  };
 
   // Initial fetch and polling for AI worker status
   useEffect(() => {
@@ -89,7 +113,7 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
   };
 
   // ── HLS setup & teardown ──────────────────────────────
-  const isLocalVideo = camera?.stream_url && (camera.stream_url.endsWith('.mp4') || camera.stream_url.endsWith('.webm'));
+  const isLocalVideo = camera?.stream_url && (camera.stream_url.toLowerCase().endsWith('.mp4') || camera.stream_url.toLowerCase().endsWith('.webm'));
   const effectiveStreamMode = isLocalVideo ? 'mp4' : streamMode;
 
   useEffect(() => {
@@ -98,11 +122,8 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
     if (camera && shouldLoad && !hasError) {
       if (effectiveStreamMode === 'mp4' && videoRef.current) {
         const filename = camera.stream_url.split(/[/\\]/).pop();
-        videoRef.current.src = `http://127.0.0.1:8002/videos/${filename}`;
-        videoRef.current.loop = true;
-        if (!isLocalVideo) {
-          videoRef.current.play().catch(() => {});
-        }
+        videoRef.current.src = `${getApiBase()}/videos/${filename}?api_key=${encodeURIComponent(getApiKey() || "")}`;
+        videoRef.current.play().catch(() => {});
       } else if (effectiveStreamMode === 'hls') {
         const hlsUrl = getHlsUrl(camera.camera_id);
 
@@ -198,11 +219,29 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
           <video
             ref={videoRef}
             className="w-full h-full object-contain bg-black cursor-default animate-in fade-in duration-300"
-            muted={!isLocalVideo}
+            muted={true}
             playsInline
-            controls={isLocalVideo}
-            autoPlay={!isLocalVideo}
+            controls={false}
+            autoPlay={true}
             poster={getSnapshotUrl(camera.camera_id)}
+            onPlay={() => setIsPlaying(true)}
+            onPause={() => {
+              setIsPlaying(false);
+              if (isScanning) handleToggleScan();
+            }}
+            onTimeUpdate={() => {
+              if (videoRef.current && videoRef.current.duration) {
+                setProgress(videoRef.current.currentTime / videoRef.current.duration);
+              }
+            }}
+            onEnded={() => {
+              if (videoRef.current) {
+                videoRef.current.pause();
+              }
+              if (isScanning) {
+                handleToggleScan();
+              }
+            }}
           />
         )
       ) : (
@@ -273,15 +312,49 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
         )}
       </div>
 
-      {/* Bottom info bar */}
-      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-2 pt-6 flex items-end justify-between z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-        <div className="flex flex-col text-white min-w-0">
-          <span className="font-medium text-xs truncate">{camera.name || `Camera ${camera.camera_id}`}</span>
-          {camera.department && (
-            <span className="text-[10px] text-gray-300 truncate">{camera.department}</span>
-          )}
+      {/* Unified YouTube-Style Bottom Bar */}
+      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent pt-8 pb-2 px-3 z-50 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1">
+        
+        {/* Progress Bar (Scrubber) */}
+        {isLocalVideo && (
+          <div 
+            className="w-full h-1.5 bg-white/30 rounded cursor-pointer mb-1 relative overflow-hidden"
+            onClick={handleSeekBg}
+          >
+            <div 
+              className="absolute top-0 left-0 bottom-0 bg-accent transition-all duration-75"
+              style={{ width: `${progress * 100}%` }}
+            />
+          </div>
+        )}
+
+        {/* Bottom Row */}
+        <div className="flex items-center justify-between w-full">
+          <div className="flex items-center gap-3 overflow-hidden">
+            
+            {/* Media Controls */}
+            {isLocalVideo && (
+              <div className="flex items-center gap-2 shrink-0">
+                <button onClick={() => seek(-10)} className="text-white hover:text-accent transition-colors"><Rewind className="w-4 h-4" /></button>
+                <button onClick={togglePlay} className="text-white hover:text-accent transition-colors">
+                  {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+                </button>
+                <button onClick={() => seek(10)} className="text-white hover:text-accent transition-colors"><FastForward className="w-4 h-4" /></button>
+              </div>
+            )}
+
+            {/* Camera Info */}
+            <div className="flex flex-col text-white min-w-0">
+              <span className="font-medium text-xs truncate">{camera.name || `Camera ${camera.camera_id}`}</span>
+              {camera.department && (
+                <span className="text-[10px] text-gray-300 truncate">{camera.department}</span>
+              )}
+            </div>
+          </div>
+          
+          {/* Status Dot */}
+          <div className={`w-2 h-2 rounded-full ${statusColor} shrink-0 ml-2 shadow-[0_0_8px_rgba(0,0,0,0.5)]`} title={camera.status} />
         </div>
-        <div className={`w-2 h-2 rounded-full ${statusColor} shrink-0`} title={camera.status} />
       </div>
     </div>
   );

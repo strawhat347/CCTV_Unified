@@ -135,13 +135,9 @@ class MJPEGStreamSource:
             if self._use_opencv:
                 ok, frame = self._cap.read()  # type: ignore
                 if not ok:
-                    # If it's a file, loop back to start
-                    if os.path.isfile(self.source_url):
-                        self._cap.set(self._cv2.CAP_PROP_POS_FRAMES, 0)  # type: ignore
-                        ok, frame = self._cap.read()
-                    if not ok:
-                        time.sleep(0.1)
-                        continue
+                    # End of file or stream dropped
+                    logger.warning(f"Stream ended for camera {self.camera_id}")
+                    break
                 # Encode to JPEG bytes
                 ret, buf = self._cv2.imencode('.jpg', frame, [self._cv2.IMWRITE_JPEG_QUALITY, MJPEG_QUALITY])  # type: ignore
                 jpeg_bytes = buf.tobytes() if ret else None

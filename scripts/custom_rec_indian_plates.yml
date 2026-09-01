@@ -1,38 +1,31 @@
 Global:
-  model_name: en_PP-OCRv4_mobile_rec
-  debug: false
   use_gpu: false
-  epoch_num: 50
+  epoch_num: 5
   log_smooth_window: 20
   print_batch_step: 10
   save_model_dir: ./output/custom_indian_plates/
   save_epoch_step: 10
-  eval_batch_step:
-  - 0
-  - 500
+  eval_batch_step: [0, 500]
   cal_metric_during_train: true
-  pretrained_model: ../models/en_PP-OCRv4_rec_train/best_accuracy
-  checkpoints: null
-  save_inference_dir: null
+  pretrained_model: D:/Projects/CCTV_Unified/models/en_PP-OCRv4_rec_train/best_accuracy
+  checkpoints:
+  save_inference_dir:
   use_visualdl: false
-  infer_img: doc/imgs_words/ch/word_1.jpg
+  infer_img: 
   character_dict_path: ppocr/utils/en_dict.txt
   max_text_length: 25
   infer_mode: false
   use_space_char: true
-  distributed: true
-  save_res_path: ./output/rec/predicts_ppocrv3.txt
+  save_res_path: ./output/predicts_custom.txt
+
 Optimizer:
   name: Adam
   beta1: 0.9
   beta2: 0.999
   lr:
     name: Cosine
-    learning_rate: 0.0005
-    warmup_epoch: 5
-  regularizer:
-    name: L2
-    factor: 3.0e-05
+    learning_rate: 0.001
+
 Architecture:
   model_type: rec
   algorithm: SVTR_LCNet
@@ -58,77 +51,59 @@ Architecture:
     - NRTRHead:
         nrtr_dim: 384
         max_text_length: 25
+
 Loss:
   name: MultiLoss
   loss_config_list:
   - CTCLoss: null
   - NRTRLoss: null
+
 PostProcess:
   name: CTCLabelDecode
+
 Metric:
   name: RecMetric
   main_indicator: acc
   ignore_space: false
+
 Train:
   dataset:
     name: SimpleDataSet
     data_dir: D:/Projects/CCTV_Unified/data/synthetic_plates
-    label_file_list:
-    - D:/Projects/CCTV_Unified/data/synthetic_plates/train.txt
+    label_file_list: ["D:/Projects/CCTV_Unified/data/synthetic_plates/train.txt"]
     transforms:
-    - DecodeImage:
-        img_mode: BGR
-        channel_first: false
-    - RecConAug:
-        prob: 0.5
-        ext_data_num: 2
-        image_shape:
-        - 48
-        - 320
-        - 3
-        max_text_length: 25
-    - RecAug: null
-    - MultiLabelEncode:
-        gtc_encode: NRTRLabelEncode
-    - KeepKeys:
-        keep_keys:
-        - image
-        - label_ctc
-        - label_gtc
-        - length
-        - valid_ratio
+      - DecodeImage:
+          img_mode: BGR
+          channel_first: false
+      - MultiLabelEncode:
+          gtc_encode: NRTRLabelEncode
+      - RecResizeImg:
+          image_shape: [3, 48, 320]
+      - KeepKeys:
+          keep_keys: ['image', 'label_ctc', 'label_gtc', 'length', 'valid_ratio']
   loader:
     shuffle: true
-    batch_size_per_card: 64
+    batch_size_per_card: 16
     drop_last: true
-    num_workers: 4
+    num_workers: 0
+
 Eval:
   dataset:
     name: SimpleDataSet
     data_dir: D:/Projects/CCTV_Unified/data/synthetic_plates
-    label_file_list:
-    - D:/Projects/CCTV_Unified/data/synthetic_plates/val.txt
+    label_file_list: ["D:/Projects/CCTV_Unified/data/synthetic_plates/val.txt"]
     transforms:
-    - DecodeImage:
-        img_mode: BGR
-        channel_first: false
-    - MultiLabelEncode:
-        gtc_encode: NRTRLabelEncode
-    - RecResizeImg:
-        image_shape:
-        - 3
-        - 48
-        - 320
-    - KeepKeys:
-        keep_keys:
-        - image
-        - label_ctc
-        - label_gtc
-        - length
-        - valid_ratio
+      - DecodeImage:
+          img_mode: BGR
+          channel_first: false
+      - MultiLabelEncode:
+          gtc_encode: NRTRLabelEncode
+      - RecResizeImg:
+          image_shape: [3, 48, 320]
+      - KeepKeys:
+          keep_keys: ['image', 'label_ctc', 'label_gtc', 'length', 'valid_ratio']
   loader:
     shuffle: false
     drop_last: false
-    batch_size_per_card: 64
-    num_workers: 4
-profiler_options: null
+    batch_size_per_card: 16
+    num_workers: 0

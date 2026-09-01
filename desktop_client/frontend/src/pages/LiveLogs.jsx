@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { fetchAllAlerts, fetchDetections, deleteAllLogs, fetchSystemStatus } from '../services/api';
-import { AlertCircle, Activity, Search, RefreshCw, Trash2, PowerOff, Power } from 'lucide-react';
+import { fetchAllAlerts, fetchDetections, deleteAllLogs, fetchSystemStatus, getApiBase, getApiKey } from '../services/api';
+import { AlertCircle, Activity, Search, RefreshCw, Trash2, PowerOff, Power, ClipboardCopy } from 'lucide-react';
 
 // Formatter for timestamps
 const formatTime = (ts) => {
@@ -214,7 +214,7 @@ export default function LiveLogs() {
                       <td className="px-4 py-2.5">
                         {log.image_path ? (
                           <img 
-                            src={`http://127.0.0.1:8002/crops/${log.image_path.split(/\\|\//).pop()}`} 
+                            src={`${getApiBase()}/crops/${log.image_path.split(/\\|\//).pop()}?api_key=${encodeURIComponent(getApiKey() || "")}`} 
                             alt="Detection Crop" 
                             className="h-10 object-cover rounded border border-border-primary"
                           />
@@ -225,7 +225,24 @@ export default function LiveLogs() {
                       <td className="px-4 py-2.5 font-medium text-text-primary capitalize">{log.object_type}</td>
                       <td className="px-4 py-2.5 text-text-secondary">{(log.confidence * 100).toFixed(1)}%</td>
                       <td className="px-4 py-2.5 text-text-primary">Cam #{log.camera_id}</td>
-                      <td className="px-4 py-2.5 text-text-bright font-mono">{log.plate_text || '-'}</td>
+                      <td className="px-4 py-2.5 text-text-bright font-mono">
+                        {log.plate_text ? (
+                          <div className="flex items-center gap-2 group">
+                            <span>{log.plate_text}</span>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(log.plate_text).then(() => {
+                                  // Optional: add a tiny toast or feedback if desired, but native clipboard is usually enough
+                                }).catch(err => console.error('Failed to copy', err));
+                              }}
+                              className="text-text-muted hover:text-accent opacity-0 group-hover:opacity-100 transition-all p-1 rounded hover:bg-bg-elevated"
+                              title="Copy plate text"
+                            >
+                              <ClipboardCopy className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : '-'}
+                      </td>
                     </tr>
                   )
                 ))

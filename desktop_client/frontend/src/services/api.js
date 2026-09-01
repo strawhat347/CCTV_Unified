@@ -1,11 +1,11 @@
 /**
- * API service for communicating with the CCTV Unified backend.
+ * Helper to get the API base URL.
  * Reads API_BASE_URL and API_KEY injected by PyWebView, with dev fallbacks.
  */
 
-const getApiBase = () => window.API_BASE_URL || 'https://localhost:8002';
+export const getApiBase = () => window.API_BASE_URL || 'https://localhost:8002';
 
-const getApiKey = () => window.API_KEY || (import.meta.env.DEV ? 'O-LYst-neW08fjz-b0jkn6dIf8kN3OprsnBxruSHpF4' : 'O-LYst-neW08fjz-b0jkn6dIf8kN3OprsnBxruSHpF4');
+export const getApiKey = () => window.API_KEY || (import.meta.env.DEV ? 'O-LYst-neW08fjz-b0jkn6dIf8kN3OprsnBxruSHpF4' : 'O-LYst-neW08fjz-b0jkn6dIf8kN3OprsnBxruSHpF4');
 const getHeaders = () => ({ 'X-API-Key': getApiKey() || '', 'Content-Type': 'application/json' });
 
 export async function waitForApi() {

@@ -21,10 +21,60 @@ from api.schemas import Detection
 router = APIRouter(prefix="/detections", tags=["detections"])
 
 
+import re
+from datetime import datetime
+
+_STANDARD_PLATE_REGEX = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{2}[0-9]{4}$')
+_BH_PLATE_REGEX = re.compile(r'^[0-9]{2}BH[0-9]{4}[A-Z]{2}$')
+
+def _filter_duplicate_standard_plates(raw_detections: List[dict]) -> List[dict]:
+    # Process from oldest to newest to suppress chains
+    raw_detections.reverse()
+    
+    filtered = []
+    last_seen = {}
+    
+    for det in raw_detections:
+        plate = det.get("plate_text")
+        cam_id = det.get("camera_id")
+        dt = det.get("detected_at")
+        
+        if not plate or not cam_id or not dt:
+            filtered.append(det)
+            continue
+            
+        # Ensure dt is a datetime object just in case the DB driver returned a string
+        if isinstance(dt, str):
+            try:
+                dt = datetime.fromisoformat(dt)
+            except ValueError:
+                filtered.append(det)
+                continue
+                
+        is_standard = bool(_STANDARD_PLATE_REGEX.match(plate)) or \
+                      bool(_BH_PLATE_REGEX.match(plate))
+                      
+        if is_standard:
+            key = (cam_id, plate)
+            if key in last_seen:
+                time_diff = (dt - last_seen[key]).total_seconds()
+                if time_diff < 5:
+                    last_seen[key] = dt
+                    continue
+            last_seen[key] = dt
+            
+        filtered.append(det)
+        
+    filtered.reverse()
+    return filtered
+
+
 @router.get("", response_model=List[Detection])
 def list_recent_detections(limit: int = Query(default=100, ge=1, le=500)):
     """GET /detections — most recent detections across all cameras."""
-    return get_recent_detections(limit=limit)
+    raw_detections = get_recent_detections(limit=limit * 3)
+    filtered = _filter_duplicate_standard_plates(raw_detections)
+    return filtered[:limit]
 
 
 @router.get("/{detection_id}", response_model=Detection)
@@ -39,7 +89,9 @@ def get_detection(detection_id: int):
 @router.get("/by-camera/{camera_id}", response_model=List[Detection])
 def list_detections_by_camera(camera_id: int, limit: int = Query(default=100, ge=1, le=500)):
     """GET /detections/by-camera/{camera_id} — most recent detections for one camera."""
-    return get_detections_by_camera(camera_id=camera_id, limit=limit)
+    raw_detections = get_detections_by_camera(camera_id=camera_id, limit=limit * 3)
+    filtered = _filter_duplicate_standard_plates(raw_detections)
+    return filtered[:limit]
 
 
 

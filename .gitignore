@@ -24,3 +24,6 @@ models/en_PP-OCRv4_rec_train/
 models/en_PP-OCRv4_rec_infer/
 *.pdopt
 *.pdparams
+
+data/
+datasets/
