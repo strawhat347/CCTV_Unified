@@ -19,6 +19,7 @@ def run_master_ocr(queue: multiprocessing.Queue, stop_event: multiprocessing.syn
     from detection.paddle_ocr_engine import PaddleOcrEngine
     from alerting.rule_engine import RuleEngine
     from registry.mock_registry import MockRegistry
+    from registry.real_registry_api import RealRegistryAPI
 
     logger.info("Initializing PaddleOCR (GPU/CPU) in Master process...")
     ocr = PaddleOcrEngine()
@@ -27,22 +28,31 @@ def run_master_ocr(queue: multiprocessing.Queue, stop_event: multiprocessing.syn
     # Fix PaddleOCR hijacking the root logger and silencing INFO logs
     logging.getLogger().setLevel(logging.INFO)
     
-    registry = MockRegistry(config.SEED_REGISTRY_CSV)
+    if config.is_mock_mode():
+        registry = MockRegistry(config.SEED_REGISTRY_CSV)
+    else:
+        registry = RealRegistryAPI()
     registry.connect()
     rule_engine = RuleEngine(registry)
     
     worker = CentralOcrWorker(ocr, rule_engine, queue)
     
     # We use stop_event in a non-blocking loop via queue timeout
-    while not stop_event.is_set():
-        try:
-            payload = queue.get(timeout=1.0)
-            if payload is None:
-                break
-            worker._process_payload(payload)
-        except Exception as e:
-            if type(e).__name__ != 'Empty':
+    try:
+        from queue import Empty
+        while not stop_event.is_set():
+            try:
+                payload = queue.get(timeout=1.0)
+                if payload is None:
+                    break
+                worker._process_payload(payload)
+            except Empty:
+                continue
+            except Exception as e:
                 logger.error(f"Central OCR error: {e}")
+    finally:
+        if hasattr(registry, 'close'):
+            registry.close()
 
 def run_edge_feeder(camera_id: int, source_url: str, camera_name: str, mode: str, queue: multiprocessing.Queue, stop_event: multiprocessing.synchronize.Event):
     import os
@@ -52,11 +62,10 @@ def run_edge_feeder(camera_id: int, source_url: str, camera_name: str, mode: str
     from pipeline.detection_pipeline import CameraEdgeFeeder
     from sources.rtsp_camera_source import RTSPCameraSource
     import config
-    import os
 
     if mode == "mock":
         from sources.mock_video_source import MockVideoSource
-        video_path = os.path.join("data", "mock_videos", "high_res_test.mp4")
+        video_path = source_url
         logger.info(f"Using mock video: {os.path.basename(video_path)}")
         source = MockVideoSource(camera_id, video_path, loop=False)
     else:
@@ -79,9 +88,9 @@ def run_edge_feeder(camera_id: int, source_url: str, camera_name: str, mode: str
     feeder.ensure_camera_row(camera_name, source_url)
     
     logger.info(f"Edge Feeder {camera_id} starting loop.")
-    source.connect()
     frame_idx = 0
     try:
+        source.connect()
         while not stop_event.is_set():
             frame = source.read_frame()
             if frame is None:
@@ -124,6 +133,11 @@ def run_edge_feeder(camera_id: int, source_url: str, camera_name: str, mode: str
         for ft in feeder.track_manager.flush_all():
             feeder._push_to_queue(ft)
         source.release()
+        try:
+            from db.dao_cameras import update_camera_status
+            update_camera_status(camera_id, "inactive")
+        except Exception:
+            pass
 
 def main():
     multiprocessing.set_start_method('spawn')
@@ -143,46 +157,23 @@ def main():
     # 3. Create Camera Edge Feeders
     camera_workers = []
     
-    from db.dao_cameras import get_all_cameras, get_camera_by_id, insert_camera, update_camera
+    from db.dao_cameras import get_all_cameras
     
-    # In mock mode, ensure at least one mock camera exists
-    if config.is_mock_mode():
-        camera_id = 1
-        video_dir = Path(config.MOCK_VIDEO_DIR)
-        videos = list(video_dir.glob("*.mp4")) + list(video_dir.glob("*.webm"))
-        if videos:
-            video_path = videos[0]
-            existing = get_camera_by_id(camera_id)
-            if not existing:
-                insert_camera(name="Gate Camera (mock)", stream_url=str(video_path), status="active")
-            elif existing.get("stream_url") != str(video_path):
-                update_camera(camera_id, {"stream_url": str(video_path)})
-            
-            worker = CameraFeederProcess(run_edge_feeder, camera_id, str(video_path), "Gate Camera (mock)", "mock", ocr_queue)
+    # Load existing cameras from the database
+    try:
+        cameras = get_all_cameras()
+    except Exception as ex:
+        logger.error(f"Failed to fetch cameras from database on startup: {ex}")
+        cameras = []
+    if cameras:
+        for cam in cameras:
+            cam_id = cam["camera_id"]
+            stream_url = cam["stream_url"]
+            name = cam["name"]
+            # Assume real mode for existing cameras, unless stream_url is a local file
+            mode = "mock" if stream_url.endswith((".mp4", ".webm")) and not stream_url.startswith("http") else "real"
+            worker = CameraFeederProcess(run_edge_feeder, cam_id, stream_url, name, mode, ocr_queue)
             camera_workers.append(worker)
-    else:
-        logger.info("Fetching live camera catalogue from Sentinel API...")
-        try:
-            from clients.sentinel_client import SentinelClient
-            client = SentinelClient(config.SENTINEL_API_HOST, api_key=config.SENTINEL_API_KEY)
-            cameras = client.get_cameras()
-            if cameras:
-                for idx, cam in enumerate(cameras):
-                    cam_id = int(cam.get("id", idx + 1))
-                    stream_url = cam.get("rtsp_url") or cam.get("url")
-                    name = cam.get("location") or f"Sentinel Camera {cam_id}"
-                    if stream_url:
-                        existing = get_camera_by_id(cam_id)
-                        if not existing:
-                            try:
-                                insert_camera(name=name, stream_url=stream_url, status="active", location=cam.get("location", ""), city=None, department_id=None)
-                            except Exception:
-                                pass
-                        worker = CameraFeederProcess(run_edge_feeder, cam_id, stream_url, name, "real", ocr_queue)
-                        # NOT starting by default as requested
-                        camera_workers.append(worker)
-        except Exception as e:
-            logger.warning(f"Could not sync with Sentinel API: {e}")
 
     logger.info(f"Starting API server on port {config.API_PORT}...")
     from api.main import app

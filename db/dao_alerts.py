@@ -39,6 +39,7 @@ def insert_alert(
         conn.commit()
         return cursor.lastrowid
     finally:
+        cursor.close()
         conn.close()
 
 
@@ -53,6 +54,7 @@ def get_alert_by_id(alert_id: int) -> dict | None:
         )
         return cursor.fetchone()
     finally:
+        cursor.close()
         conn.close()
 
 
@@ -75,6 +77,7 @@ def get_unacknowledged_alerts(limit: int = 100) -> list[dict]:
         )
         return cursor.fetchall()
     finally:
+        cursor.close()
         conn.close()
 
 
@@ -93,6 +96,7 @@ def get_all_alerts(limit: int = 500) -> list[dict]:
         )
         return cursor.fetchall()
     finally:
+        cursor.close()
         conn.close()
 
 
@@ -112,6 +116,7 @@ def get_alerts_by_camera(camera_id: int, limit: int = 100) -> list[dict]:
         )
         return cursor.fetchall()
     finally:
+        cursor.close()
         conn.close()
 
 
@@ -130,6 +135,7 @@ def acknowledge_alert(alert_id: int) -> bool:
         conn.commit()
         return cursor.rowcount > 0
     finally:
+        cursor.close()
         conn.close()
 
 
@@ -145,4 +151,5 @@ def delete_alert(alert_id: int) -> bool:
         conn.commit()
         return cursor.rowcount > 0
     finally:
+        cursor.close()
         conn.close()

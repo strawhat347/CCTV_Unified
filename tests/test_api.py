@@ -79,4 +79,4 @@ def test_list_recent_detections(mock_get_recent):
     assert len(data) == 1
     assert data[0]["object_type"] == "vehicle"
     assert data[0]["confidence"] == 0.95
-    mock_get_recent.assert_called_once_with(limit=10)
+    mock_get_recent.assert_called_once_with(limit=30)

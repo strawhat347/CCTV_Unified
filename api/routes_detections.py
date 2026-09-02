@@ -28,8 +28,8 @@ _STANDARD_PLATE_REGEX = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{2}[0-9]{4}$')
 _BH_PLATE_REGEX = re.compile(r'^[0-9]{2}BH[0-9]{4}[A-Z]{2}$')
 
 def _filter_duplicate_standard_plates(raw_detections: List[dict]) -> List[dict]:
-    # Process from oldest to newest to suppress chains
-    raw_detections.reverse()
+    # Process from oldest to newest to suppress chains (work on a copy to avoid mutating caller's list)
+    raw_detections = list(reversed(raw_detections))
     
     filtered = []
     last_seen = {}
@@ -96,8 +96,10 @@ def list_detections_by_camera(camera_id: int, limit: int = Query(default=100, ge
 
 
 @router.delete("")
-def delete_all_logs():
-    "DELETE /detections - Temporary endpoint to clear all logs"
+def delete_all_logs(confirm: str = Query(default="")):
+    """DELETE /detections - Clear all detection and alert logs. Requires confirm=DELETE_ALL_LOGS."""
+    if confirm != "DELETE_ALL_LOGS":
+        raise HTTPException(status_code=400, detail="Pass ?confirm=DELETE_ALL_LOGS to confirm this destructive action.")
     from db.connection_pool import get_connection
     conn = get_connection()
     cursor = conn.cursor()

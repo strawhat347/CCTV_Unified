@@ -6,39 +6,40 @@ like malloc/free on every function call instead of reusing a buffer),
 we keep a small pool of already-open connections and borrow/return them.
 """
 
-import os
+import threading
 from mysql.connector import pooling
-from dotenv import load_dotenv
 
 import config
-
-load_dotenv()
 
 _POOL_NAME = "cctv_unified_pool"
 _POOL_SIZE = config.DB_POOL_SIZE
 
 _dbconfig = {
-    "host": os.getenv("DB_HOST", "localhost"),
-    "port": int(os.getenv("DB_PORT", 3306)),
-    "database": os.getenv("DB_NAME", "cctv_unified"),
-    "user": os.getenv("DB_USER", "root"),
-    "password": os.getenv("DB_PASS", ""),
+    "host": config.DB_HOST,
+    "port": config.DB_PORT,
+    "database": config.DB_NAME,
+    "user": config.DB_USER,
+    "password": config.DB_PASS,
 }
 
 _pool = None
+_pool_lock = threading.Lock()
 
 
 def get_pool():
     """
     Lazily initialize and return the MySQL connection pool singleton.
+    Thread-safe via double-checked locking.
     """
     global _pool
     if _pool is None:
-        _pool = pooling.MySQLConnectionPool(
-            pool_name=_POOL_NAME,
-            pool_size=_POOL_SIZE,
-            **_dbconfig,
-        )
+        with _pool_lock:
+            if _pool is None:
+                _pool = pooling.MySQLConnectionPool(
+                    pool_name=_POOL_NAME,
+                    pool_size=_POOL_SIZE,
+                    **_dbconfig,
+                )
     return _pool
 
 

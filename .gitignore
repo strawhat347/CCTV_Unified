@@ -6,24 +6,37 @@ venv/
 # Python Cache
 __pycache__/
 *.pyc
+.pytest_cache/
 
-# Secrets
+# Secrets & TLS
 .env
 secrets.json
+*.pem
+*.key
+*.crt
 
 # Large Video Files and Datasets
 *.mp4
 *.avi
 *.mov
+
+# Data directory (preserve seed files)
+data/*
+!data/seed_registry.csv
 data/unified_dataset/
 data/crops/
 data/mock_videos/
+datasets/
+
+# Model artifacts
 runs/detect/
 test_images/
 models/en_PP-OCRv4_rec_train/
 models/en_PP-OCRv4_rec_infer/
 *.pdopt
 *.pdparams
+*.pt
 
-data/
-datasets/
+# Logs
+*.log
+main_logs.txt

@@ -2,10 +2,8 @@
 alerting/alert_dispatcher.py - Writes alerts to DB and broadcasts via WebSocket.
 """
 import logging
-import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Optional
 
 import httpx
 from mysql.connector import Error as MySQLError
@@ -26,11 +24,14 @@ _BROADCAST_HOST = getattr(config, "API_HOST", "127.0.0.1")
 
 def _send_broadcast(alert_data: dict):
     try:
-        _http_client.post(
+        response = _http_client.post(
             f"http://{_BROADCAST_HOST}:{config.API_PORT}/alerts/internal/push", 
             json=alert_data,
             headers={"X-API-Key": config.API_KEY}
         )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        logger.warning(f"Alert broadcast returned HTTP {e.response.status_code}: {e.response.text}")
     except httpx.RequestError as e:
         logger.warning(f"Failed to broadcast alert via WebSocket: {e}")
 
@@ -47,7 +48,7 @@ def dispatch_alert(
     """
     
     # Define severity based on status
-    severity = "high" if record.status == "stolen" else "medium"
+    severity = "high" if "stolen" in record.status.lower() else "medium"
     
     flags_str = ", ".join(record.flags)
     message = f"Plate {plate_text} flagged! Status: {record.status.upper()}."

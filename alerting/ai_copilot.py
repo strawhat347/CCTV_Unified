@@ -8,12 +8,14 @@ import urllib.request
 import urllib.error
 from typing import Dict, Any, List
 
+import config
+
 logger = logging.getLogger("ai_copilot")
 
 class AICopilot:
-    def __init__(self, model_name: str = "qwen2.5:1.5b", base_url: str = "http://localhost:11434"):
-        self.model_name = model_name
-        self.base_url = base_url.rstrip("/")
+    def __init__(self, model_name: str = None, base_url: str = None):
+        self.model_name = model_name or config.OLLAMA_MODEL
+        self.base_url = (base_url or config.OLLAMA_BASE_URL).rstrip("/")
         self.api_url = f"{self.base_url}/api/chat"
 
     def query_alerts(self, user_prompt: str, context_alerts: List[Dict[str, Any]], context_detections: List[Dict[str, Any]] = None, context_cameras: List[Dict[str, Any]] = None) -> str:
@@ -25,8 +27,8 @@ class AICopilot:
         import re
         
         # Enforce minimum word count to prevent ambiguous 1-2 word queries (Hackathon stability constraint)
-        if len(user_prompt.split()) < 3:
-            return "Query too short. Please provide more context (e.g., 'Show recent alerts')."
+        # if len(user_prompt.split()) < 3:
+        #     return "Query too short. Please provide more context (e.g., 'Show recent alerts')."
 
         # Intercept dangerous keywords before they ever reach the AI
         blacklist = [
@@ -84,8 +86,8 @@ class AICopilot:
             ],
             "stream": False,
             "options": {
-                "temperature": 0.1,
-                "top_p": 0.1
+                "temperature": config.OLLAMA_TEMPERATURE,
+                "top_p": config.OLLAMA_TOP_P
             }
         }
 
@@ -95,7 +97,7 @@ class AICopilot:
                 data=json.dumps(payload).encode("utf-8"),
                 headers={"Content-Type": "application/json"}
             )
-            with urllib.request.urlopen(req, timeout=120) as response:
+            with urllib.request.urlopen(req, timeout=config.OLLAMA_TIMEOUT) as response:
                 result = json.loads(response.read().decode("utf-8"))
                 return result.get("message", {}).get("content", "Error: No content returned by LLM.")
         except urllib.error.URLError as e:
@@ -110,7 +112,7 @@ class AICopilot:
         Checks if the local Ollama instance is currently running and responding on its port.
         """
         try:
-            with urllib.request.urlopen("http://localhost:11434/", timeout=2) as response:
+            with urllib.request.urlopen(f"{self.base_url}/", timeout=2) as response:
                 return response.status == 200
         except Exception:
             return False

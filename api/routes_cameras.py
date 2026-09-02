@@ -110,7 +110,7 @@ def update_single_camera(camera_id: int, camera_update: CameraUpdate):
 @router.post("/bulk")
 async def import_cameras_bulk(file: UploadFile = File(...)):
     """POST /cameras/bulk — import cameras from CSV."""
-    if not file.filename.endswith(".csv"):
+    if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are allowed.")
 
     contents = await file.read(MAX_UPLOAD_BYTES + 1)

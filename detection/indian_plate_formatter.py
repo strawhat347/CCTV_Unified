@@ -199,14 +199,17 @@ def normalize_plate_chars(plate: str) -> str:
     if len(chars) > 4:
         # The registration number is at most 4 digits.
         # We scan up to 4 characters from the end.
+        # The registration number is at most 4 digits at the end of the plate.
+        # Only scan within the last 4 characters to avoid corrupting series letters.
         reg_start = len(chars)
-        for i in range(len(chars) - 1, max(3, len(chars) - 5), -1):
+        scan_limit = max(4, len(chars) - 4)
+        for i in range(len(chars) - 1, scan_limit - 1, -1):
             if chars[i].isdigit() or chars[i] in DIGIT_FIXES:
                 reg_start = i
             else:
                 break
 
-        # Ensure we leave at least one character for the series 
+        # Ensure we leave at least one character for the series
         # (Series starts at index 4, so reg_start must be at least 5)
         if reg_start < 5:
             reg_start = 5

@@ -1,39 +1,31 @@
 """
-Stub for Step 8 Swap-Readiness.
-Proves we can easily drop in a real VAHAN / eGujCop API integration by simply extending BasePlateRegistry.
-"""
-from __future__ import annotations
+registry/real_registry_api.py — Real registry API client (not yet implemented).
 
+This module will eventually connect to a real vehicle registration database API.
+Currently raises NotImplementedError to prevent silent failures.
+"""
+
+import logging
+from typing import Optional
 from registry.base_plate_registry import BasePlateRegistry, RegistryRecord
 
-class RealRegistryAPI(BasePlateRegistry):
-    def __init__(self, api_url: str, auth_token: str):
-        self.api_url = api_url
-        self.auth_token = auth_token
-        
-    def connect(self) -> None:
-        """Authenticate against the external API (stub: no-op)."""
-        pass
+logger = logging.getLogger("real_registry_api")
 
-    def lookup(self, plate_number: str) -> RegistryRecord | None:
-        """
-        Query a real government database.
-        
-        Example implementation:
-        import requests
-        response = requests.get(
-            f"{self.api_url}/search?plate={plate_number}", 
-            headers={"Authorization": self.auth_token}
+
+class RealRegistryAPI(BasePlateRegistry):
+    """
+    Placeholder for a real vehicle registration database API.
+    Not yet implemented — will raise NotImplementedError if invoked.
+    """
+
+    def connect(self):
+        logger.warning(
+            "RealRegistryAPI.connect() called but real registry is not yet implemented. "
+            "Set MODE=mock in .env to use the mock registry."
         )
-        if response.status_code == 200:
-            data = response.json()
-            return RegistryRecord(
-                plate_number=plate_number,
-                status=data.get("status", "clear"),
-                flags=data.get("flags", []),
-                owner_info={"owner": data.get("owner"), "make": data.get("make")}
-            )
-        return None
-        """
-        # Stub implementation always returns None (not found)
-        return None
+
+    def lookup(self, plate_number: str) -> Optional[RegistryRecord]:
+        raise NotImplementedError(
+            "RealRegistryAPI.lookup() is not yet implemented. "
+            "Set MODE=mock in your .env to use the mock registry instead."
+        )

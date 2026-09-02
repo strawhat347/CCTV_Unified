@@ -43,12 +43,12 @@ logger = logging.getLogger("api.routes_streams")
 router = APIRouter(prefix="/streams", tags=["streams"])
 
 # ── Configuration ─────────────────────────────────────────
-MJPEG_FPS = 15           # Max frames per second for MJPEG mode
-MJPEG_QUALITY = 70       # JPEG quality (0-100) for MJPEG mode
-HLS_SEGMENT_TIME = 2     # Seconds per HLS segment
-HLS_LIST_SIZE = 5        # Number of segments in the playlist
-STREAM_IDLE_TIMEOUT = 30 # Seconds to keep stream alive after last viewer leaves
-MAX_CONCURRENT_STREAMS = 100  # Max distinct cameras streamed at once (per mode)
+MJPEG_FPS = config.MJPEG_FPS           # Max frames per second for MJPEG mode
+MJPEG_QUALITY = config.MJPEG_QUALITY       # JPEG quality (0-100) for MJPEG mode
+HLS_SEGMENT_TIME = config.HLS_SEGMENT_TIME     # Seconds per HLS segment
+HLS_LIST_SIZE = config.HLS_LIST_SIZE        # Number of segments in the playlist
+STREAM_IDLE_TIMEOUT = config.STREAM_IDLE_TIMEOUT # Seconds to keep stream alive after last viewer leaves
+MAX_CONCURRENT_STREAMS = config.MAX_CONCURRENT_STREAMS  # Max distinct cameras streamed at once (per mode)
 FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None
 
 if FFMPEG_AVAILABLE:
@@ -256,8 +256,8 @@ class HLSStreamSource:
         # Start ffmpeg as a background process
         self._process = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         self._running = True
@@ -491,7 +491,7 @@ def mjpeg_stream(camera_id: int, api_key: str = Query(...)):
                         b"\r\n" + jpeg + b"\r\n"
                     )
                 time.sleep(1.0 / MJPEG_FPS)
-        except GeneratorExit:
+        finally:
             stream_manager.release_mjpeg_viewer(camera_id)
 
     return StreamingResponse(

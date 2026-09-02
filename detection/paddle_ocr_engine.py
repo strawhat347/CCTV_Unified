@@ -25,6 +25,9 @@ from detection.base_ocr_engine import BaseOcrEngine, OcrResult
 from detection.indian_plate_formatter import extract_indian_plate, normalize_plate_chars
 from detection.plate_preprocessor import PlatePreprocessor
 
+import logging
+_logger = logging.getLogger("paddle_ocr_engine")
+
 
 class PaddleOcrEngine(BaseOcrEngine):
     """
@@ -53,9 +56,11 @@ class PaddleOcrEngine(BaseOcrEngine):
         import config
 
         # Restore PATH hacks for paddlepaddle-gpu to find its pip-installed DLLs
-        base_dir = Path(__file__).resolve().parent.parent
-        _cudnn_bin = base_dir / ".venv311" / "Lib" / "site-packages" / "nvidia" / "cudnn" / "bin"
-        _cublas_bin = base_dir / ".venv311" / "Lib" / "site-packages" / "nvidia" / "cublas" / "bin"
+        # Dynamically discover the venv path for CUDA/cuDNN DLLs
+        import sys
+        venv_site = Path(sys.prefix) / "Lib" / "site-packages"
+        _cudnn_bin = venv_site / "nvidia" / "cudnn" / "bin"
+        _cublas_bin = venv_site / "nvidia" / "cublas" / "bin"
         if _cudnn_bin.exists():
             os.environ["PATH"] = f"{_cudnn_bin};{os.environ.get('PATH', '')}"
         if _cublas_bin.exists():
@@ -94,14 +99,14 @@ class PaddleOcrEngine(BaseOcrEngine):
                 if "Unknown argument:" in error_str:
                     bad_arg = error_str.split("Unknown argument:")[-1].strip().strip("'\"")
                     if bad_arg in kwargs:
-                        print(f"[PaddleOcrEngine] API changed in this PaddleOCR version. Removing unsupported argument: '{bad_arg}'")
+                        _logger.warning(f"API changed in this PaddleOCR version. Removing unsupported argument: '{bad_arg}'")
                         del kwargs[bad_arg]
                         continue
                 # If it's a different ValueError, re-raise it
                 raise
             except Exception as e:
-                if use_gpu and "gpu" in kwargs:
-                    print(f"[PaddleOcrEngine] GPU init failed ({e}), falling back to CPU.")
+                if use_gpu and kwargs.get("use_gpu"):
+                    _logger.warning(f"GPU init failed ({e}), falling back to CPU.")
                     kwargs["use_gpu"] = False
                     continue
                 raise

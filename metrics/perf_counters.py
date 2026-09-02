@@ -13,26 +13,24 @@ class PerfCounter:
         self.window_size = window_size
         self.processing_times = deque(maxlen=window_size)
         self.lock = threading.Lock()
-        self.start_time = None
+        self._local = threading.local()
         self.frames_processed = 0
 
     def start_frame(self):
-        with self.lock:
-            self.start_time = time.time()
+        self._local.start_time = time.perf_counter()
 
     def end_frame(self):
-        with self.lock:
-            if self.start_time is not None:
-                elapsed = time.time() - self.start_time
+        start = getattr(self._local, 'start_time', None)
+        if start is not None:
+            elapsed = time.perf_counter() - start
+            with self.lock:
                 self.processing_times.append(elapsed)
                 self.frames_processed += 1
-                self.start_time = None
+            self._local.start_time = None
 
     def get_fps(self):
         with self.lock:
-            if not self.processing_times:
-                return 0.0
-            avg_time = sum(self.processing_times) / len(self.processing_times)
+            avg_time = self.get_avg_processing_time()
             return 1.0 / avg_time if avg_time > 0 else 0.0
 
     def get_avg_processing_time(self):

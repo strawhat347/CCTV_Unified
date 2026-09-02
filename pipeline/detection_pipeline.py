@@ -11,8 +11,10 @@ from detection.base_ocr_engine import BaseOcrEngine, OcrResult
 from db.dao_cameras import get_camera_by_id, insert_camera, update_camera
 from db.dao_detections import insert_detection
 from collections import Counter
+import itertools
 
 logger = logging.getLogger("pipeline")
+_track_id_counter = itertools.count(start=1_000_000)
 
 class CameraEdgeFeeder:
     def __init__(self, camera_id: int, source: BaseCameraSource, detector: BaseDetector, ocr_queue: Queue, sample_interval: int = 1):
@@ -61,7 +63,7 @@ class CameraEdgeFeeder:
             for box in active_tracks:
                 # If the detector doesn't support tracking (e.g. Hierarchical), assign a unique ID per detection
                 # so it just gets processed as a single-frame "track".
-                t_id = box.track_id if box.track_id is not None else id(box)
+                t_id = box.track_id if box.track_id is not None else next(_track_id_counter)
                 
                 bbox = (int(box.x1), int(box.y1), int(box.x2), int(box.y2))
                 conf = float(box.confidence)
@@ -249,7 +251,7 @@ class CentralOcrWorker:
                     json=det_data,
                     headers={"X-API-Key": config.API_KEY},
                     timeout=3.0,
-                    verify=False
+                    verify=True
                 )
             except Exception as e:
                 logger.warning(f"Failed to broadcast raw detection: {e}")
@@ -283,7 +285,7 @@ class CentralOcrWorker:
         from datetime import datetime
         os.makedirs("data/crops", exist_ok=True)
         # Create a more professional name: camX_plate_YYYYMMDD_HHMMSS.jpg
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         safe_text = text if text and text != "unknown" else "unreadable"
         fname = f"cam{camera_id}_{safe_text}_{timestamp}.jpg"
         path = os.path.join("data", "crops", fname)

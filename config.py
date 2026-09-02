@@ -11,7 +11,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # --- Monkey-patch for Windows asyncio ProactorEventLoop ---
-# Uvicorn on Windows often overrides the event loop policy back to Proactor,
+# Uvicorn on Windows overrides the event loop policy back to Proactor,
 # which notoriously crashes with WinError 10054 when a client disconnects early.
 if sys.platform == 'win32':
     try:
@@ -40,7 +40,7 @@ load_dotenv(BASE_DIR / ".env")
 # --- Mode toggle ---
 # "mock" -> use local video files + seeded mock registry table
 # "real" -> (future) use RTSP camera feeds + real registry API
-MODE = "mock"
+MODE = os.getenv("MODE", "mock")
 
 # --- Sentinel Camera Grid API ---
 SENTINEL_API_HOST = os.getenv("SENTINEL_API_HOST", "https://live.corp8.cloud")
@@ -52,7 +52,7 @@ DB_PORT = int(os.getenv("DB_PORT", "3306"))
 DB_NAME = os.getenv("DB_NAME", "cctv_unified")
 DB_USER = os.getenv("DB_USER", "root")
 DB_PASS = os.getenv("DB_PASS", "")
-DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "2"))
+DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "10"))
 
 # --- API Security ---
 API_KEY = os.getenv("API_KEY")
@@ -105,6 +105,21 @@ USE_HIERARCHICAL = os.getenv("USE_HIERARCHICAL", "true").lower() in ("true", "1"
 MOCK_VIDEO_DIR = os.getenv("MOCK_VIDEO_DIR", str(BASE_DIR / "data" / "mock_videos"))
 SEED_REGISTRY_CSV = os.getenv("SEED_REGISTRY_CSV", str(BASE_DIR / "data" / "seed_registry.csv"))
 TEST_IMAGES_DIR = os.getenv("TEST_IMAGES_DIR", str(BASE_DIR / "test_images"))
+
+# --- Streaming ---
+MJPEG_FPS = int(os.getenv("MJPEG_FPS", "15"))
+MJPEG_QUALITY = int(os.getenv("MJPEG_QUALITY", "70"))
+HLS_SEGMENT_TIME = int(os.getenv("HLS_SEGMENT_TIME", "2"))
+HLS_LIST_SIZE = int(os.getenv("HLS_LIST_SIZE", "5"))
+STREAM_IDLE_TIMEOUT = int(os.getenv("STREAM_IDLE_TIMEOUT", "30"))
+MAX_CONCURRENT_STREAMS = int(os.getenv("MAX_CONCURRENT_STREAMS", "100"))
+
+# --- AI Copilot ---
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.1"))
+OLLAMA_TOP_P = float(os.getenv("OLLAMA_TOP_P", "0.1"))
+OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "120"))
 
 
 def is_mock_mode() -> bool:

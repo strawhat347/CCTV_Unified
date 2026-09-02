@@ -1,5 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
+import mimetypes
 import os
 import shutil
 import uuid
@@ -10,16 +11,28 @@ router = APIRouter(prefix="/videos", tags=["videos"])
 VIDEOS_DIR = os.path.join("data", "offline_videos")
 os.makedirs(VIDEOS_DIR, exist_ok=True)
 
+MAX_UPLOAD_BYTES = 500 * 1024 * 1024  # 500 MB
+
 @router.post("/upload")
 async def upload_video(file: UploadFile = File(...)):
-    if not file.filename.endswith(('.mp4', '.webm')):
+    if not file.filename or not file.filename.endswith(('.mp4', '.webm')):
         raise HTTPException(status_code=400, detail="Only MP4 or WebM files are allowed.")
     
-    unique_filename = f"{uuid.uuid4().hex}_{file.filename}"
+    # Sanitize filename to prevent path traversal
+    safe_name = os.path.basename(file.filename)
+    unique_filename = f"{uuid.uuid4().hex}_{safe_name}"
     filepath = os.path.join(VIDEOS_DIR, unique_filename)
     
+    # Stream to disk with size limit
+    bytes_written = 0
     with open(filepath, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+        while chunk := await file.read(8192):
+            bytes_written += len(chunk)
+            if bytes_written > MAX_UPLOAD_BYTES:
+                buffer.close()
+                os.remove(filepath)
+                raise HTTPException(status_code=413, detail=f"File too large. Maximum size is {MAX_UPLOAD_BYTES // (1024*1024)} MB.")
+            buffer.write(chunk)
         
     video_id = insert_video(file.filename, filepath)
     return {"id": video_id, "filename": file.filename, "status": "uploaded"}
@@ -37,18 +50,33 @@ def play_video(video_id: int):
     filepath = video["filepath"]
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="Video file missing on disk")
-        
-    return FileResponse(filepath, media_type="video/mp4")
+    
+    # Detect MIME type dynamically
+    media_type = mimetypes.guess_type(filepath)[0] or "video/mp4"
+    return FileResponse(filepath, media_type=media_type)
+
+from fastapi import Request
+import asyncio
 
 @router.delete("/delete/{video_id}")
-def delete_video_route(video_id: int):
+async def delete_video_route(video_id: int, request: Request):
     video = get_video_by_id(video_id)
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
+    
+    # Stop the worker if it's currently scanning this video
+    workers = getattr(request.app.state, "workers", [])
+    worker = next((w for w in workers if getattr(w, "is_video", False) and getattr(w, "video_id", None) == video_id), None)
+    if worker and worker.is_alive():
+        worker.stop()
+        await asyncio.sleep(0.5)
         
     filepath = video["filepath"]
     if os.path.exists(filepath):
-        os.remove(filepath)
+        try:
+            os.remove(filepath)
+        except Exception:
+            pass # Windows might lock it briefly, ignore failure
         
     delete_video(video_id)
     return {"status": "success", "message": "Video deleted"}

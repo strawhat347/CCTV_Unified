@@ -33,21 +33,23 @@ class RTSPCameraSource(BaseCameraSource):
         
     def _reconnect(self):
         """Reconnect to the stream with exponential backoff as per Sentinel guidelines."""
-        logger.warning(f"[{self.camera_id}] Stream disconnected. Attempting to reconnect...")
+        MAX_RETRIES = 10
         backoff = 2.0
         max_backoff = 30.0
-        
-        while True:
-            self.release()
+        for attempt in range(1, MAX_RETRIES + 1):
+            logger.warning(f"[{self.camera_id}] reconnect attempt {attempt}/{MAX_RETRIES}, waiting {backoff:.0f}s...")
+            import time
             time.sleep(backoff)
-            logger.info(f"[{self.camera_id}] Reconnecting after {backoff}s backoff...")
-            
+            backoff = min(backoff * 2, max_backoff)
             try:
+                self.release()
                 self.connect()
-                logger.info(f"[{self.camera_id}] Reconnected successfully.")
-                break
-            except RuntimeError:
-                backoff = min(max_backoff, backoff * 2.0)
+                logger.info(f"[{self.camera_id}] reconnected successfully.")
+                return True
+            except Exception as e:
+                logger.error(f"[{self.camera_id}] reconnect error: {e}")
+        logger.error(f"[{self.camera_id}] failed to reconnect after {MAX_RETRIES} attempts.")
+        return False
 
     def read_frame(self) -> Optional[np.ndarray]:
         """Fetch the next live frame, handling disconnects automatically."""

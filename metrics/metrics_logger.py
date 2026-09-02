@@ -18,6 +18,8 @@ class MetricsLogger:
         self._stop_event = threading.Event()
 
     def start(self):
+        if self.thread and self.thread.is_alive():
+            return
         self._stop_event.clear()
         self.thread = threading.Thread(target=self._log_loop, daemon=True)
         self.thread.start()

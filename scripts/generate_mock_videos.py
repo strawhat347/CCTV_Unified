@@ -1,8 +1,9 @@
 import cv2
 import numpy as np
 import os
+from pathlib import Path
 
-base = r'D:\Hackathon\CCTV_Unified\data\mock_videos'
+base = str(Path(__file__).resolve().parent.parent / "data" / "mock_videos")
 os.makedirs(base, exist_ok=True)
 
 fourcc = cv2.VideoWriter_fourcc(*'mp4v')

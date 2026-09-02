@@ -5,6 +5,7 @@ registry/mock_registry.py - Mock plate registry using a local CSV file.
 from __future__ import annotations
 
 import csv
+import difflib
 from pathlib import Path
 from typing import Optional
 
@@ -18,6 +19,7 @@ class MockRegistry(BasePlateRegistry):
         self._connected = False
 
     def connect(self) -> None:
+        self._data.clear()
         if not self.csv_path.exists():
             raise FileNotFoundError(f"Registry seed file not found: {self.csv_path}")
 
@@ -55,7 +57,6 @@ class MockRegistry(BasePlateRegistry):
         if not self._connected:
             raise RuntimeError("Registry not connected. Call connect() first.")
         
-        import difflib
         clean_plate = plate_number.strip().upper()
         
         # Fast path: strict match

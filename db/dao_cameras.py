@@ -142,9 +142,10 @@ def delete_all_cameras() -> int:
         cursor = conn.cursor()
         # Truncate won't work with FK constraints, so we DELETE
         cursor.execute("DELETE FROM cameras")
+        deleted_count = cursor.rowcount
         cursor.execute("ALTER TABLE cameras AUTO_INCREMENT = 1")
         conn.commit()
-        return cursor.rowcount
+        return deleted_count
     finally:
         cursor.close()
         conn.close()
@@ -231,7 +232,6 @@ def delete_camera(camera_id: int) -> bool:
             (camera_id,),
         )
         deleted = cursor.rowcount > 0
-        cursor.execute("ALTER TABLE cameras AUTO_INCREMENT = 1")
         conn.commit()
         return deleted
     finally:

@@ -65,4 +65,8 @@ async def websocket_endpoint(websocket: WebSocket):
             # Keep connection alive, wait for client to disconnect
             data = await websocket.receive_text()
     except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
         manager.disconnect(websocket)
