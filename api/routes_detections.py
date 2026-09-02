@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from typing import List
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from db.dao_detections import (
     get_detection_by_id,
     get_detections_by_camera,
     get_recent_detections,
 )
-from api.schemas import Detection
+from api.schemas import Detection, InternalDetectionPush
 
 router = APIRouter(prefix="/detections", tags=["detections"])
 
@@ -109,3 +109,18 @@ def delete_all_logs():
     finally:
         cursor.close()
         conn.close()
+
+@router.post("/internal/push")
+async def internal_push_detection(detection_data: InternalDetectionPush):
+    """
+    Called by backend pipeline workers to broadcast a raw detection to the GUI.
+    Authenticated via the global X-API-Key middleware.
+    """
+    from api.ws_alerts import manager
+    
+    payload = {
+        "type": "detection",
+        "data": detection_data.model_dump(mode="json")
+    }
+    await manager.broadcast_message(payload)
+    return {"status": "broadcasted"}

@@ -44,7 +44,7 @@ MODE = "mock"
 
 # --- Sentinel Camera Grid API ---
 SENTINEL_API_HOST = os.getenv("SENTINEL_API_HOST", "https://live.corp8.cloud")
-
+SENTINEL_API_KEY = os.getenv("SENTINEL_API_KEY")
 
 # --- Database ---
 DB_HOST = os.getenv("DB_HOST", "localhost")
@@ -52,7 +52,7 @@ DB_PORT = int(os.getenv("DB_PORT", "3306"))
 DB_NAME = os.getenv("DB_NAME", "cctv_unified")
 DB_USER = os.getenv("DB_USER", "root")
 DB_PASS = os.getenv("DB_PASS", "")
-DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "15"))
+DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "2"))
 
 # --- API Security ---
 API_KEY = os.getenv("API_KEY")

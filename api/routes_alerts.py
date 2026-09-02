@@ -27,19 +27,20 @@ def acknowledge(alert_id: int):
     return {"status": "acknowledged"}
 
 @router.post("/internal/push")
-async def internal_push_alert(alert_data: InternalAlertPush, request: Request):
+async def internal_push_alert(alert_data: InternalAlertPush):
     """
     Called by alerting/alert_dispatcher.py (running in pipeline processes)
     to broadcast an alert to all connected WebSocket clients.
 
-    Restricted to local callers since this bypasses the normal alerts table
-    and pushes straight to every connected WebSocket client.
+    Authenticated via the global X-API-Key middleware.
     """
-    if request.client is None or request.client.host not in ("127.0.0.1", "localhost", "::1"):
-        raise HTTPException(status_code=403, detail="Internal endpoint")
-    # mode="json" so created_at (a datetime) serializes to an ISO string —
+    # mode="json" so created_at (a datetime) serializes to an ISO string
     # WebSocket.send_json() can't encode a raw datetime object.
-    await manager.broadcast_alert(alert_data.model_dump(mode="json"))
+    payload = {
+        "type": "alert",
+        "data": alert_data.model_dump(mode="json")
+    }
+    await manager.broadcast_message(payload)
     return {"status": "broadcasted"}
 
 @router.websocket("/ws")

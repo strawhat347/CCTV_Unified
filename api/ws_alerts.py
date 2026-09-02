@@ -30,11 +30,11 @@ class ConnectionManager:
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
 
-    async def broadcast_alert(self, alert_data: dict):
+    async def broadcast_message(self, data: dict):
         # We need to copy the list because connections might be removed during iteration
         for connection in list(self.active_connections):
             try:
-                await connection.send_json(alert_data)
+                await connection.send_json(data)
             except Exception:
                 self.disconnect(connection)
 

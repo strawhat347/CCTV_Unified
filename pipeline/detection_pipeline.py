@@ -113,6 +113,8 @@ class CentralOcrWorker:
         self.ocr_queue = ocr_queue
         self.enhancer = ImageEnhancer()
         self._running = False
+        self.cooldown_cache = {}
+        self.cooldown_seconds = 30
         
     def run(self):
         logger.info("Central AI Worker started and listening to OCR queue.")
@@ -173,6 +175,33 @@ class CentralOcrWorker:
             img_path = self._save_crop(display_crop, camera_id, safe_text)
             
         if plate_text:
+            import time
+            import re
+            
+            _STANDARD_PLATE_REGEX = re.compile(r'^[A-Z]{2}[0-9]{1,2}[A-Z]{1,2}[0-9]{4}$')
+            _BH_PLATE_REGEX = re.compile(r'^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$')
+            
+            is_valid_rto = bool(_STANDARD_PLATE_REGEX.match(plate_text)) or bool(_BH_PLATE_REGEX.match(plate_text))
+            
+            if not is_valid_rto:
+                logger.debug(f"[Central AI] Plate {plate_text} is invalid. Dropping to prevent flood.")
+                return
+
+            now = time.time()
+            cache_key = f"{camera_id}_{plate_text}"
+            
+            if cache_key in self.cooldown_cache:
+                if now - self.cooldown_cache[cache_key] < 30:
+                    logger.debug(f"[Central AI] Camera {camera_id} Plate {plate_text} in cooldown. Skipping duplicate alert.")
+                    return
+            
+            self.cooldown_cache[cache_key] = now
+            
+            # Clean up old cache entries
+            for k, v in list(self.cooldown_cache.items()):
+                if now - v > 30:
+                    del self.cooldown_cache[k]
+                    
             logger.info(f"[Central AI] Camera {camera_id} Finalized Track {ft.track_id}: {plate_text} (conf={ocr_conf:.2f}) saved to {img_path}")
             
             bbox_x, bbox_y, bbox_w, bbox_h = ft.bbox if ft.bbox else (0, 0, 0, 0)
@@ -196,6 +225,34 @@ class CentralOcrWorker:
                     plate_text=plate_text,
                     camera_id=camera_id
                 )
+                
+            # Broadcast the detection to the GUI instantly
+            import httpx
+            import config
+            from datetime import datetime, timezone
+            try:
+                det_data = {
+                    "detection_id": det_id,
+                    "camera_id": camera_id,
+                    "object_type": "vehicle",
+                    "confidence": ocr_conf,
+                    "bbox": f"{int(bbox_x)},{int(bbox_y)},{int(bbox_w)},{int(bbox_h)}",
+                    "plate_text": plate_text,
+                    "image_path": img_path,
+                    "detected_at": datetime.now(timezone.utc).isoformat()
+                }
+                import os
+                protocol = "https" if os.path.exists("cert.pem") else "http"
+                api_host = getattr(config, "API_HOST", "127.0.0.1")
+                httpx.post(
+                    f"{protocol}://{api_host}:{config.API_PORT}/detections/internal/push",
+                    json=det_data,
+                    headers={"X-API-Key": config.API_KEY},
+                    timeout=3.0,
+                    verify=False
+                )
+            except Exception as e:
+                logger.warning(f"Failed to broadcast raw detection: {e}")
         else:
             logger.info(f"[Central AI] Camera {camera_id} Track {ft.track_id} yielded no OCR text. (Attempted {len(ft.sharp_crops)} sharp crops, {ft.blurry_skips} blurry skips)")
             

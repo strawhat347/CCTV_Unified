@@ -50,7 +50,17 @@ export default function AlertPanel({ onClose, onAlertCountChange }) {
     waitForApi().then(() => {
       if (!isActive) return;
       ws = connectAlertWebSocket(
-        (alert) => setAlerts((prev) => [alert, ...prev].slice(0, 50)),
+        (payload) => {
+          if (payload.type === 'alert') {
+            const newAlert = payload.data;
+            setAlerts((prev) => {
+              const exists = prev.find((a) => a.alert_id === newAlert.alert_id);
+              if (exists) return prev;
+              const newList = [newAlert, ...prev].slice(0, 50);
+              return newList;
+            });
+          }
+        },
         () => setWsConnected(false),
         () => setWsConnected(false),
       );

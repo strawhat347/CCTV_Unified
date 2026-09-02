@@ -62,9 +62,8 @@ class CameraCreate(BaseModel):
     @field_validator("stream_url")
     @classmethod
     def validate_stream_url(cls, v: str) -> str:
-        # Prevent invalid strings like "sgd" which crash OpenCV's VideoCapture
-        if not (v.startswith(("rtsp://", "http://", "https://", "mock://")) or "/" in v or "\\" in v):
-            raise ValueError('stream_url must be a valid URL (rtsp/http/mock) or file path')
+        if not v.startswith(("rtsps://", "https://")):
+            raise ValueError('stream_url must be a secure remote URL (rtsps/https). Local files, unencrypted connections, or mock protocols are not allowed.')
         return v
 
 
@@ -86,8 +85,11 @@ class CameraUpdate(BaseModel):
     @field_validator("stream_url")
     @classmethod
     def validate_stream_url(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None and not (v.startswith(("rtsp://", "http://", "https://", "mock://")) or "/" in v or "\\" in v):
-            raise ValueError('stream_url must be a valid URL (rtsp/http/mock) or file path')
+        if v is None:
+            return v
+            
+        if not v.startswith(("rtsps://", "https://")):
+            raise ValueError('stream_url must be a secure remote URL (rtsps/https). Local files, unencrypted connections, or mock protocols are not allowed.')
         return v
 
 
@@ -140,3 +142,15 @@ class InternalAlertPush(BaseModel):
     location: Optional[str] = Field(None, max_length=150)
     acknowledged: bool = False
     created_at: Optional[datetime] = None
+
+
+class InternalDetectionPush(BaseModel):
+    detection_id: int
+    camera_id: int
+    object_type: str
+    confidence: float
+    bbox: Optional[str] = None
+    plate_text: Optional[str] = None
+    ocr_confidence: Optional[float] = None
+    image_path: Optional[str] = None
+    detected_at: Optional[datetime] = None

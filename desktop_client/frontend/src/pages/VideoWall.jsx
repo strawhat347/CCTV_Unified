@@ -105,7 +105,10 @@ export default function VideoWall() {
     if (offset > 0 && loadDataRef.current) loadDataRef.current(false, searchQueryRef.current || '');
   }, [offset]);
 
-  useEffect(() => { localStorage.setItem(STORAGE_KEY_ACTIVE, JSON.stringify(activeCameras)); }, [activeCameras]);
+  useEffect(() => { 
+    localStorage.setItem(STORAGE_KEY_ACTIVE, JSON.stringify(activeCameras)); 
+    window.dispatchEvent(new Event('videowall_cameras_changed'));
+  }, [activeCameras]);
   useEffect(() => { localStorage.setItem(STORAGE_KEY_SEARCH, searchQuery); }, [searchQuery]);
   useEffect(() => { localStorage.setItem(STORAGE_KEY_DISTRICT, districtFilter); }, [districtFilter]);
   useEffect(() => { localStorage.setItem(STORAGE_KEY_OFFSET, offset.toString()); }, [offset]);

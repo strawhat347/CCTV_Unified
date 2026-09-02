@@ -129,6 +129,9 @@ async def import_cameras_bulk(file: UploadFile = File(...)):
         if not name or not stream_url:
             continue
             
+        if not stream_url.startswith(("https://", "rtsps://")):
+            continue
+            
         location = row.get("location", "").strip()
         department = row.get("department", "").strip()
         city = row.get("city", "").strip()

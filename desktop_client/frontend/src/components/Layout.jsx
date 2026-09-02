@@ -84,6 +84,13 @@ export default function Layout() {
         onOpenAddCamera={() => setManageModalOpen(true)}
       />
       <div className="flex-1 flex min-h-0 overflow-hidden relative">
+        {/* Invisible backdrop to capture clicks outside the sidebar */}
+        {isSidebarOpen && (
+          <div 
+            className="fixed inset-0 z-[90]" 
+            onClick={() => setIsSidebarOpen(false)}
+          ></div>
+        )}
         <Sidebar isOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
         <div className="flex-1 min-w-0 overflow-hidden pl-12">
           <Outlet />

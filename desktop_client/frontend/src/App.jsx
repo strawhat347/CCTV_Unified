@@ -2,6 +2,7 @@ import { HashRouter as Router, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import VideoWall from './pages/VideoWall';
+import VideoFileWall from './pages/VideoFileWall';
 import GISRegistry from './pages/GISRegistry';
 import LiveLogs from './pages/LiveLogs';
 
@@ -27,7 +28,8 @@ function App() {
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<Dashboard />} />
-          <Route path="live" element={<VideoWall />} />
+          <Route path="live/cameras" element={<VideoWall />} />
+          <Route path="live/videos" element={<VideoFileWall />} />
           <Route path="registry" element={<GISRegistry />} />
           <Route path="logs" element={<LiveLogs />} />
           <Route path="playback" element={<Playback />} />

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X, UploadCloud, Trash2, AlertTriangle, Loader2, Plus, Camera as CameraIcon, MapPin } from 'lucide-react';
 import { MapContainer, TileLayer, useMapEvents, Marker } from 'react-leaflet';
 import L from 'leaflet';
@@ -41,16 +42,20 @@ export default function CameraManagementModal({ isOpen, onClose, onImport, onCle
       alert("Name, Stream URL, City, District, Location, Department Name, Department ID, Latitude, and Longitude are required.");
       return;
     }
+    if (!newCamera.stream_url.startsWith('https://') && !newCamera.stream_url.startsWith('rtsps://')) {
+      alert("Stream URL must be a secure remote URL (https:// or rtsps://). Local files, unencrypted connections, or mock protocols are no longer allowed.");
+      return;
+    }
     onAddCamera(newCamera);
   };
 
-  return (
-    <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+  return createPortal(
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
       
       {/* Map Picker Modal */}
       {isMapOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-bg-secondary w-full max-w-2xl rounded-xl shadow-2xl flex flex-col h-[70vh] border border-border-secondary overflow-hidden">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50" onClick={() => setIsMapOpen(false)}>
+          <div className="bg-bg-secondary w-full max-w-2xl rounded-xl shadow-2xl flex flex-col h-[70vh] border border-border-secondary overflow-hidden" onClick={e => e.stopPropagation()}>
             <div className="p-4 border-b border-border-secondary flex justify-between items-center bg-bg-elevated">
               <h3 className="font-semibold text-text-bright flex items-center gap-2"><MapPin className="w-4 h-4 text-accent" /> Pick Location</h3>
               <button onClick={() => setIsMapOpen(false)} className="text-text-muted hover:text-danger"><X className="w-5 h-5" /></button>
@@ -74,7 +79,7 @@ export default function CameraManagementModal({ isOpen, onClose, onImport, onCle
         </div>
       )}
 
-      <div className="bg-bg-elevated border border-border-secondary rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col">
+      <div className="bg-bg-elevated border border-border-secondary rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border-primary bg-bg-secondary shrink-0">
           <div className="flex items-center gap-2 text-text-bright">
@@ -278,6 +283,7 @@ export default function CameraManagementModal({ isOpen, onClose, onImport, onCle
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

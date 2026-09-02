@@ -34,6 +34,9 @@ from api.routes_cameras import router as cameras_router
 from api.routes_detections import router as detections_router
 from api.routes_alerts import router as alerts_router
 from api.routes_streams import router as streams_router, stream_manager
+from api.routes_videos import router as videos_router
+from api.routes_ai import router as ai_router, copilot
+from db.dao_videos import create_videos_table
 
 import config
 
@@ -48,6 +51,10 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("API shutting down — stopping stream sources...")
     stream_manager.shutdown()
+    
+    # Instantly free up the AI VRAM without killing the Ollama service
+    copilot.unload_model()
+    
     logger.info("API shutdown complete.")
 
 
@@ -142,6 +149,9 @@ app.include_router(cameras_router)
 app.include_router(detections_router)
 app.include_router(alerts_router)
 app.include_router(streams_router)
+app.include_router(videos_router)
+app.include_router(ai_router)
+create_videos_table()
 
 # Mount the crops directory so the frontend can display the raw detection images
 os.makedirs("data/crops", exist_ok=True)
@@ -163,53 +173,75 @@ def health_check():
 def system_status(request: Request):
     """Returns the current status of the backend, including whether pipeline workers are active."""
     workers = getattr(app.state, "workers", [])
+    ocr_workers = getattr(app.state, "ocr_workers", [])
     active_cameras = [w.camera_id for w in workers if w.is_alive()]
-    any_active = len(active_cameras) > 0
-    return {"workers_active": any_active, "worker_count": len(workers), "active_cameras": active_cameras}
+    ocr_active = any(w.is_alive() for w in ocr_workers)
+    any_active = ocr_active or len(active_cameras) > 0
+    return {"workers_active": any_active, "ocr_active": ocr_active, "worker_count": len(workers), "active_cameras": active_cameras}
 
 from pydantic import BaseModel
 class ScanToggleRequest(BaseModel):
     scanning: bool
 
+import asyncio
+
 @app.post("/system/scan", tags=["system"])
 @limiter.exempt
-def toggle_scan(request: Request, body: ScanToggleRequest):
+async def toggle_scan(request: Request, body: ScanToggleRequest):
     """Starts or stops the pipeline workers."""
     workers = getattr(app.state, "workers", [])
+    ocr_workers = getattr(app.state, "ocr_workers", [])
     
     if body.scanning:
-        # Start up to 5 camera workers if not already running
-        started = 0
-        for w in workers:
+        # Start OCR workers if not running
+        for w in ocr_workers:
             if not w.is_alive():
-                logger.info(f"API: Starting worker for Camera {w.camera_id}")
+                logger.info("API: Starting OCR worker")
                 w.start()
-                started += 1
-            if started >= 5:
-                break
+
+        # Camera feeders are NOT started here.
+        # Use POST /system/scan/{camera_id} to start individual camera feeders.
+        
+        # Wait for the OCR worker processes to initialise
+        await asyncio.sleep(2.5)
         return {"status": "started"}
     else:
         # Stop all workers
         for w in workers:
             w.stop()
+        for w in ocr_workers:
+            w.stop()
+        
+        # Wait for processes to safely terminate and flush tracks
+        await asyncio.sleep(1.5)
         return {"status": "stopped"}
 
 @app.post("/system/scan/{camera_id}", tags=["system"])
 @limiter.exempt
-def toggle_scan_camera(camera_id: int, request: Request, body: ScanToggleRequest):
+async def toggle_scan_camera(camera_id: int, request: Request, body: ScanToggleRequest):
     """Starts or stops the pipeline worker for a specific camera."""
     workers = getattr(app.state, "workers", [])
+    ocr_workers = getattr(app.state, "ocr_workers", [])
+    
     for w in workers:
         if getattr(w, "camera_id", None) == camera_id:
             if body.scanning:
+                # Ensure OCR workers are running
+                for ow in ocr_workers:
+                    if not ow.is_alive():
+                        logger.info("API: Starting OCR worker")
+                        ow.start()
+                        
                 if not w.is_alive():
                     logger.info(f"API: Starting worker for Camera {camera_id}")
                     w.start()
+                    await asyncio.sleep(2.5) # Wait for model load
                 return {"status": "started", "camera_id": camera_id}
             else:
                 if w.is_alive():
                     logger.info(f"API: Stopping worker for Camera {camera_id}")
                     w.stop()
+                    await asyncio.sleep(1.5) # Wait for flush
                 return {"status": "stopped", "camera_id": camera_id}
     
     raise HTTPException(status_code=404, detail="Worker for camera not found")

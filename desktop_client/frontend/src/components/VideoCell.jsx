@@ -175,6 +175,14 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
       if (camera) {
         releaseStream(camera.camera_id);
       }
+      // Force-close MJPEG/video connections by clearing the src attribute.
+      // Browsers (especially Chromium) keep HTTP sockets open for <img> MJPEG
+      // streams even after the DOM node is removed, causing socket exhaustion.
+      if (videoRef.current) {
+        videoRef.current.pause();
+        videoRef.current.removeAttribute('src');
+        videoRef.current.load();
+      }
     };
   }, [camera]);
 
@@ -267,16 +275,6 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
 
       {/* Hover controls (top-right) */}
       <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-        <button
-          onClick={handleToggleScan}
-          className={`p-1 text-white rounded backdrop-blur-sm transition-colors flex items-center gap-1 px-2
-            ${isScanning ? 'bg-success/80 hover:bg-success' : 'bg-black/50 hover:bg-black/70'}`}
-          title={isScanning ? "Stop AI Worker" : "Assign AI Worker"}
-        >
-          <Power className="w-3.5 h-3.5" />
-          <span className="text-xs font-medium">{isScanning ? 'Scanning' : 'Assign AI'}</span>
-        </button>
-
         {isFullscreen && (
           <button
             onClick={() => alert('Vehicle bounding system: To be implemented.')}

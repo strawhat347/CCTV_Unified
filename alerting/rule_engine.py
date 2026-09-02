@@ -34,10 +34,20 @@ class RuleEngine:
             
         # Define triggering statuses
         if record.status in ("stolen", "flagged"):
+            # If the OCR text doesn't exactly match the registry record, it's a fuzzy match
+            import difflib
+            import copy
+            
+            # Create a copy so we don't mutate the mock registry's global state
+            alert_record = copy.deepcopy(record)
+            
+            if difflib.SequenceMatcher(None, plate_text.upper(), record.plate_number.upper()).ratio() < 1.0:
+                alert_record.status = f"probable {record.status} match"
+
             # Trigger alert!
             dispatch_alert(
                 camera_id=camera_id,
                 detection_id=detection_id,
                 plate_text=plate_text,
-                record=record
+                record=alert_record
             )

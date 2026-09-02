@@ -48,7 +48,7 @@ MJPEG_QUALITY = 70       # JPEG quality (0-100) for MJPEG mode
 HLS_SEGMENT_TIME = 2     # Seconds per HLS segment
 HLS_LIST_SIZE = 5        # Number of segments in the playlist
 STREAM_IDLE_TIMEOUT = 30 # Seconds to keep stream alive after last viewer leaves
-MAX_CONCURRENT_STREAMS = 8  # Max distinct cameras streamed at once (per mode)
+MAX_CONCURRENT_STREAMS = 100  # Max distinct cameras streamed at once (per mode)
 FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None
 
 if FFMPEG_AVAILABLE:
@@ -229,6 +229,9 @@ class HLSStreamSource:
         # Input: loop if it's a local file (mock mode)
         if os.path.isfile(self.source_url):
             cmd += ["-stream_loop", "-1", "-re"]
+            
+        if self.source_url.startswith("rtsp://") or self.source_url.startswith("rtsps://"):
+            cmd += ["-rtsp_transport", "tcp"]
 
         cmd += ["-i", self.source_url]
 
@@ -320,15 +323,9 @@ class StreamManager:
             raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
         
         url = camera["stream_url"]
-        if url.startswith("mock://"):
-            base_dir = Path(__file__).parent.parent / "data" / "mock_videos"
-            if camera_id == 1:
-                return str(base_dir / "camera_1_gate.mp4")
-            elif camera_id == 2:
-                return str(base_dir / "camera_2_lobby.mp4")
-            else:
-                return str(base_dir / "camera_3_test.mp4")
-                
+        if not url.startswith(("https://", "rtsps://", "rtsp://")):
+            raise HTTPException(status_code=400, detail="Only https://, rtsps:// and rtsp:// protocols are allowed for camera streams")
+            
         return url
 
     # ── HLS methods ───────────────────────────────────────

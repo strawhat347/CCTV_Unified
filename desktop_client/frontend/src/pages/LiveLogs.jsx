@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { fetchAllAlerts, fetchDetections, deleteAllLogs, fetchSystemStatus, getApiBase, getApiKey } from '../services/api';
-import { AlertCircle, Activity, Search, RefreshCw, Trash2, PowerOff, Power, ClipboardCopy } from 'lucide-react';
+import { fetchAllAlerts, fetchDetections, deleteAllLogs, fetchSystemStatus, connectAlertWebSocket, getApiBase, getApiKey } from '../services/api';
+import { AlertCircle, Activity, Search, RefreshCw, Trash2, PowerOff, Power, X } from 'lucide-react';
 
 // Formatter for timestamps
 const formatTime = (ts) => {
@@ -13,11 +13,12 @@ const formatTime = (ts) => {
 };
 
 export default function LiveLogs() {
-  const [activeTab, setActiveTab] = useState('alerts');
+  const [activeTab, setActiveTab] = useState('detections');
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [workersActive, setWorkersActive] = useState(false);
+  const [selectedImage, setSelectedImage] = useState(null);
 
   const loadLogs = async (hideLoadingState = false) => {
     if (!hideLoadingState) setLoading(true);
@@ -52,24 +53,34 @@ export default function LiveLogs() {
   };
 
   useEffect(() => {
-    // Always load logs once on mount/tab change
+    // Always load historical logs once on mount/tab change
     loadLogs();
     
-    // Auto-refresh every 1 second, but only if workers are active
-    const intervalId = setInterval(async () => {
-      try {
-        const status = await fetchSystemStatus();
-        setWorkersActive(status.workers_active);
-        
-        if (status.workers_active) {
-          await loadLogs(true); // pass true to hide the loading spinner during background refresh
+    // Use the single WebSocket to receive both live alerts and raw detections instantly
+    const ws = connectAlertWebSocket(
+      (payload) => {
+        setWorkersActive(true);
+        // Payload now looks like { type: 'alert' | 'detection', data: {...} }
+        if (activeTab === 'alerts' && payload.type === 'alert') {
+          setLogs((prev) => [payload.data, ...prev].slice(0, 200));
+        } else if (activeTab === 'detections' && payload.type === 'detection') {
+          setLogs((prev) => [payload.data, ...prev].slice(0, 200));
         }
-      } catch (err) {
-        console.error("Failed to check system status:", err);
-      }
-    }, 1000);
+      },
+      () => setWorkersActive(false),
+      () => setWorkersActive(false),
+    );
     
-    return () => clearInterval(intervalId);
+    ws.onopen = () => setWorkersActive(true);
+    
+    // Fallback status check on mount
+    fetchSystemStatus()
+      .then(status => setWorkersActive(status.workers_active))
+      .catch(() => {});
+    
+    return () => {
+      ws.close();
+    };
   }, [activeTab]);
 
   const filteredLogs = logs.filter(log => {
@@ -108,9 +119,22 @@ export default function LiveLogs() {
               type="text"
               placeholder="Search logs..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 pr-4 py-1.5 bg-bg-secondary border border-border-primary rounded-md text-sm text-text-primary focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              onChange={(e) => {
+                const val = e.target.value.replace(/\s+/g, '').toUpperCase();
+                setSearchQuery(val);
+              }}
+              maxLength={10}
+              className="pl-9 pr-8 py-1.5 bg-bg-secondary border border-border-primary rounded-md text-sm text-text-primary focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent w-full"
             />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-text-muted hover:text-text-primary rounded-full hover:bg-bg-hover transition-colors focus:outline-none"
+                title="Clear search"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
           <div className="flex gap-2">
             <button 
@@ -135,18 +159,18 @@ export default function LiveLogs() {
 
       <div className="flex gap-1 mb-4 border-b border-border-primary shrink-0">
         <button
-          onClick={() => setActiveTab('alerts')}
-          className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'alerts' ? 'border-accent text-accent' : 'border-transparent text-text-secondary hover:text-text-primary hover:border-border-secondary'}`}
-        >
-          <AlertCircle className="w-4 h-4" />
-          Security Alerts
-        </button>
-        <button
           onClick={() => setActiveTab('detections')}
           className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'detections' ? 'border-accent text-accent' : 'border-transparent text-text-secondary hover:text-text-primary hover:border-border-secondary'}`}
         >
           <Activity className="w-4 h-4" />
           Raw Detections
+        </button>
+        <button
+          onClick={() => setActiveTab('alerts')}
+          className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'alerts' ? 'border-accent text-accent' : 'border-transparent text-text-secondary hover:text-text-primary hover:border-border-secondary'}`}
+        >
+          <AlertCircle className="w-4 h-4" />
+          Security Alerts
         </button>
       </div>
 
@@ -213,11 +237,17 @@ export default function LiveLogs() {
                       <td className="px-4 py-2.5 text-text-secondary">{formatTime(log.detected_at)}</td>
                       <td className="px-4 py-2.5">
                         {log.image_path ? (
-                          <img 
-                            src={`${getApiBase()}/crops/${log.image_path.split(/\\|\//).pop()}?api_key=${encodeURIComponent(getApiKey() || "")}`} 
-                            alt="Detection Crop" 
-                            className="h-10 object-cover rounded border border-border-primary"
-                          />
+                          <div 
+                            className="cursor-pointer inline-block" 
+                            title="Click to open image"
+                            onClick={() => setSelectedImage(`${getApiBase()}/crops/${log.image_path.split(/\\|\//).pop()}?api_key=${encodeURIComponent(getApiKey() || "")}`)}
+                          >
+                            <img 
+                              src={`${getApiBase()}/crops/${log.image_path.split(/\\|\//).pop()}?api_key=${encodeURIComponent(getApiKey() || "")}`} 
+                              alt="Detection Crop" 
+                              className="h-10 object-cover rounded border border-border-primary hover:opacity-80 transition-opacity"
+                            />
+                          </div>
                         ) : (
                           <span className="text-text-muted text-xs">No image</span>
                         )}
@@ -227,19 +257,16 @@ export default function LiveLogs() {
                       <td className="px-4 py-2.5 text-text-primary">Cam #{log.camera_id}</td>
                       <td className="px-4 py-2.5 text-text-bright font-mono">
                         {log.plate_text ? (
-                          <div className="flex items-center gap-2 group">
+                          <div 
+                            className="flex items-center gap-2 group cursor-pointer w-max"
+                            title="Click to copy number plate"
+                            onClick={() => {
+                              navigator.clipboard.writeText(log.plate_text).then(() => {
+                                // Optional feedback
+                              }).catch(err => console.error('Failed to copy', err));
+                            }}
+                          >
                             <span>{log.plate_text}</span>
-                            <button
-                              onClick={() => {
-                                navigator.clipboard.writeText(log.plate_text).then(() => {
-                                  // Optional: add a tiny toast or feedback if desired, but native clipboard is usually enough
-                                }).catch(err => console.error('Failed to copy', err));
-                              }}
-                              className="text-text-muted hover:text-accent opacity-0 group-hover:opacity-100 transition-all p-1 rounded hover:bg-bg-elevated"
-                              title="Copy plate text"
-                            >
-                              <ClipboardCopy className="w-3.5 h-3.5" />
-                            </button>
                           </div>
                         ) : '-'}
                       </td>
@@ -251,6 +278,20 @@ export default function LiveLogs() {
           </table>
         </div>
       </div>
+
+      {/* Image Modal */}
+      {selectedImage && (
+        <div 
+          className="fixed inset-0 bg-black/80 z-[10000] flex items-center justify-center p-4"
+          onClick={() => setSelectedImage(null)}
+        >
+          <img 
+            src={selectedImage} 
+            alt="Full Detection" 
+            className="max-w-full max-h-full object-contain rounded border border-border-secondary shadow-2xl"
+          />
+        </div>
+      )}
     </div>
   );
 }
