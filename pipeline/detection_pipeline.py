@@ -78,6 +78,11 @@ class CameraEdgeFeeder:
                 if y2 <= y1 or x2 <= x1:
                     continue
                     
+                # Drop detections that are physically too small to contain a readable plate
+                # This prevents wasting OCR compute on tiny false positive crops
+                if bw < 40 or bh < 15:
+                    continue
+                    
                 crop = frame[y1:y2, x1:x2]
                 
                 is_sharp, sharpness = self.track_manager.is_sharp(crop)

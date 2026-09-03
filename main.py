@@ -134,6 +134,11 @@ def run_edge_feeder(camera_id: int, source_url: str, camera_name: str, mode: str
                 if y2 <= y1 or x2 <= x1:
                     continue
                     
+                # Drop detections that are physically too small to contain a readable plate
+                # This prevents wasting OCR compute on tiny false positive crops
+                if bw < 40 or bh < 15:
+                    continue
+                    
                 crop = frame[y1:y2, x1:x2]
                 
                 is_sharp, sharpness = feeder.track_manager.is_sharp(crop)
