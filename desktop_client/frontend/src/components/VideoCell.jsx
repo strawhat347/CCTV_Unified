@@ -44,19 +44,29 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
 
   // Initial fetch and polling for AI worker status
   useEffect(() => {
-    const fetchStatus = () => {
-      fetchSystemStatus()
-        .then(status => {
-          if (!isTogglingRef.current) {
-            setIsScanning(status.active_cameras?.includes(camera?.camera_id) || false);
-          }
-        })
-        .catch(err => console.error("Failed to fetch system status:", err));
+    let timeoutId;
+    let isMounted = true;
+
+    const fetchStatus = async () => {
+      try {
+        const status = await fetchSystemStatus();
+        if (isMounted && !isTogglingRef.current) {
+          setIsScanning(status.active_cameras?.includes(camera?.camera_id) || false);
+        }
+      } catch (err) {
+        console.error("Failed to fetch system status:", err);
+      } finally {
+        if (isMounted) {
+          timeoutId = setTimeout(fetchStatus, 5000);
+        }
+      }
     };
-    
+
     fetchStatus();
-    const interval = setInterval(fetchStatus, 5000);
-    return () => clearInterval(interval);
+    return () => {
+      isMounted = false;
+      clearTimeout(timeoutId);
+    };
   }, [camera?.camera_id]);
 
   const handleToggleScan = async () => {
