@@ -157,24 +157,6 @@ def main():
     # 3. Create Camera Edge Feeders
     camera_workers = []
     
-    from db.dao_cameras import get_all_cameras
-    
-    # Load existing cameras from the database
-    try:
-        cameras = get_all_cameras()
-    except Exception as ex:
-        logger.error(f"Failed to fetch cameras from database on startup: {ex}")
-        cameras = []
-    if cameras:
-        for cam in cameras:
-            cam_id = cam["camera_id"]
-            stream_url = cam["stream_url"]
-            name = cam["name"]
-            # Assume real mode for existing cameras, unless stream_url is a local file
-            mode = "mock" if stream_url.endswith((".mp4", ".webm")) and not stream_url.startswith("http") else "real"
-            worker = CameraFeederProcess(run_edge_feeder, cam_id, stream_url, name, mode, ocr_queue)
-            camera_workers.append(worker)
-
     logger.info(f"Starting API server on port {config.API_PORT}...")
     from api.main import app
     # Inject camera workers into app state so they can be toggled via frontend

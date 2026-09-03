@@ -130,15 +130,10 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
-# Tightened CORS: Only allow local clients (like the desktop client)
+# Tightened CORS: Only allow local clients (like the desktop client's random pywebview port)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        f"http://localhost:{config.API_PORT}",
-        f"https://localhost:{config.API_PORT}",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -228,31 +223,51 @@ async def toggle_scan(request: Request, body: ScanToggleRequest):
 @limiter.exempt
 async def toggle_scan_camera(camera_id: int, request: Request, body: ScanToggleRequest):
     """Starts or stops the pipeline worker for a specific camera."""
+    from pipeline.multiprocessing_workers import CameraFeederProcess
+    from db.dao_cameras import get_camera_by_id
+    try:
+        from main import run_edge_feeder
+    except ImportError:
+        import sys, os
+        sys.path.append(os.getcwd())
+        from main import run_edge_feeder
+        
     workers = getattr(app.state, "workers", [])
     ocr_workers = getattr(app.state, "ocr_workers", [])
+    ocr_queue = getattr(app.state, "ocr_queue", None)
     
-    for w in workers:
-        if getattr(w, "camera_id", None) == camera_id:
-            if body.scanning:
-                # Ensure OCR workers are running
-                for ow in ocr_workers:
-                    if not ow.is_alive():
-                        logger.info("API: Starting OCR worker")
-                        ow.start()
-                        
-                if not w.is_alive():
-                    logger.info(f"API: Starting worker for Camera {camera_id}")
-                    w.start()
-                    await asyncio.sleep(2.5) # Wait for model load
-                return {"status": "started", "camera_id": camera_id}
-            else:
-                if w.is_alive():
-                    logger.info(f"API: Stopping worker for Camera {camera_id}")
-                    w.stop()
-                    await asyncio.sleep(1.5) # Wait for flush
-                return {"status": "stopped", "camera_id": camera_id}
+    worker = next((w for w in workers if not getattr(w, "is_video", False) and getattr(w, "camera_id", None) == camera_id), None)
     
-    raise HTTPException(status_code=404, detail="Worker for camera not found")
+    if body.scanning:
+        if not worker:
+            cam = get_camera_by_id(camera_id)
+            if not cam:
+                raise HTTPException(status_code=404, detail="Camera not found in database")
+            
+            stream_url = cam.stream_url
+            # Assume real mode for existing cameras, unless stream_url is a local file
+            mode = "mock" if stream_url.endswith((".mp4", ".webm")) and not stream_url.startswith("http") else "real"
+            
+            worker = CameraFeederProcess(run_edge_feeder, camera_id, stream_url, cam.name, mode, ocr_queue)
+            workers.append(worker)
+            
+        # Ensure OCR workers are running
+        for ow in ocr_workers:
+            if not ow.is_alive():
+                logger.info("API: Starting OCR worker")
+                ow.start()
+                
+        if not worker.is_alive():
+            logger.info(f"API: Starting worker for Camera {camera_id}")
+            worker.start()
+            await asyncio.sleep(2.5) # Wait for model load
+        return {"status": "started", "camera_id": camera_id}
+    else:
+        if worker and worker.is_alive():
+            logger.info(f"API: Stopping worker for Camera {camera_id}")
+            worker.stop()
+            await asyncio.sleep(1.5) # Wait for flush
+        return {"status": "stopped", "camera_id": camera_id}
 
 @app.post("/system/scan/video/{video_id}", tags=["system"])
 @limiter.exempt
