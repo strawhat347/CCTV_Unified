@@ -301,9 +301,9 @@ export default function GISRegistry() {
                       <video 
                         src={getStreamUrl(cam.camera_id)} 
                         className="w-full h-full object-cover"
-                        autoPlay 
                         muted 
                         loop
+                        controls
                         playsInline
                         onError={(e) => { e.target.poster = '/placeholder.jpg'; }}
                       />

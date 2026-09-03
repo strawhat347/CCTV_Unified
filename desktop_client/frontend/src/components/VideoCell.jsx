@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Hls from 'hls.js';
 import { Video, X, Maximize2, Minimize2, ChevronLeft, RefreshCw, AlertTriangle, Power, Play, Pause, Rewind, FastForward } from 'lucide-react';
-import { getStreamUrl, getHlsUrl, getSnapshotUrl, releaseStream, toggleCameraScan, fetchSystemStatus, getApiBase, getApiKey } from '../services/api';
+import { getStreamUrl, getHlsUrl, releaseStream, toggleCameraScan, fetchSystemStatus, getApiBase, getApiKey } from '../services/api';
 
 /**
  * VideoCell — Individual grid cell in the Fluid Video Wall.
@@ -12,7 +12,7 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
   const [hasError, setHasError] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [shouldLoad, setShouldLoad] = useState(false);
+  const [hasUserStarted, setHasUserStarted] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [isPlaying, setIsPlaying] = useState(true);
   const [progress, setProgress] = useState(0);
@@ -119,7 +119,7 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
   useEffect(() => {
     let hls = null;
 
-    if (camera && shouldLoad && !hasError) {
+    if (camera && hasUserStarted && !hasError) {
       if (effectiveStreamMode === 'mp4' && videoRef.current) {
         const filename = camera.stream_url.split(/[/\\]/).pop();
         videoRef.current.src = `${getApiBase()}/videos/${filename}?api_key=${encodeURIComponent(getApiKey() || "")}`;
@@ -167,7 +167,7 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
     return () => {
       if (hls) hls.destroy();
     };
-  }, [camera, effectiveStreamMode, hasError, retryKey, shouldLoad]);
+  }, [camera, effectiveStreamMode, hasError, retryKey, hasUserStarted]);
 
   // ── Release stream on unmount / camera change ─────────
   useEffect(() => {
@@ -208,13 +208,14 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
     >
       {/* Stream or Error */}
       {!hasError ? (
-        !shouldLoad ? (
-          <img
-            key={`snapshot-${camera.camera_id}`}
-            src={getSnapshotUrl(camera.camera_id)}
-            alt={camera.name || `Camera ${camera.camera_id}`}
-            className="w-full h-full object-cover cursor-default opacity-50 transition-opacity duration-300"
-          />
+        !hasUserStarted ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-bg-elevated cursor-pointer hover:bg-bg-hover transition-colors group/play" onClick={() => setHasUserStarted(true)}>
+             <div className="w-16 h-16 rounded-full bg-accent/80 flex items-center justify-center group-hover/play:bg-accent transition-colors shadow-lg">
+                <Play className="w-8 h-8 text-white ml-1" />
+             </div>
+             <p className="mt-4 font-semibold text-sm text-text-primary">{camera.name || `Camera ${camera.camera_id}`}</p>
+             <p className="text-xs text-text-muted">Click to Start Stream</p>
+          </div>
         ) : effectiveStreamMode === 'mjpeg' || effectiveStreamMode === 'unknown' ? (
           <img
             key={`mjpeg-${camera.camera_id}-${retryKey}`}
@@ -230,8 +231,6 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
             muted={true}
             playsInline
             controls={false}
-            autoPlay={true}
-            poster={getSnapshotUrl(camera.camera_id)}
             onPlay={() => setIsPlaying(true)}
             onPause={() => {
               setIsPlaying(false);
