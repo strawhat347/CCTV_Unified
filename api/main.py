@@ -1,16 +1,19 @@
 """
-api/main.py — FastAPI app entrypoint (Step 3.5: read-only API skeleton).
+api/main.py — FastAPI app entrypoint (Step 11: Enterprise Security).
 
-Run from the PROJECT ROOT (same convention as pipeline/ingestion_pipeline.py
-— everything in this repo is invoked as a module, never as a bare script):
+Run from the PROJECT ROOT:
 
     python -m uvicorn api.main:app --reload --port 8000
 
 Then open http://127.0.0.1:8000/docs for interactive Swagger UI.
+Use the "Authorize" button to log in with username/password.
 
-CORS is wide open (allow_origins=["*"]) for now since desktop_client/
-is a local pywebview/Electron shell talking to localhost — tighten this
-before Step 7.5 (auth) or before anything ever touches a real network.
+Security:
+  - All routes are protected by JWT Bearer tokens (OAuth2).
+  - Internal pipeline endpoints (/alerts/internal/push, /detections/internal/push)
+    are authenticated via the legacy X-API-Key header for backward compatibility
+    with the pipeline processes.
+  - Swagger docs are open in mock mode for development convenience.
 """
 
 from __future__ import annotations
@@ -36,36 +39,74 @@ from api.routes_alerts import router as alerts_router
 from api.routes_streams import router as streams_router, stream_manager
 from api.routes_videos import router as videos_router
 from api.routes_ai import router as ai_router, copilot
+from api.routes_auth import router as auth_router
 from db.dao_videos import create_videos_table
+from db.dao_users import ensure_users_table, get_user_by_username, create_user
 
 import config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("api.main")
 
+class EndpointFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.getMessage().find("GET /system/status") == -1
+
+logging.getLogger("uvicorn.access").addFilter(EndpointFilter())
+
 API_KEY = config.API_KEY
+
+
+def _seed_admin_user():
+    """Create the default admin account on first run if it doesn't exist."""
+    from api.auth import hash_password
+
+    admin = get_user_by_username(config.ADMIN_SEED_USERNAME)
+    if admin is None:
+        hashed = hash_password(config.ADMIN_SEED_PASSWORD)
+        create_user(
+            username=config.ADMIN_SEED_USERNAME,
+            password_hash=hashed,
+            role="admin",
+        )
+        logger.info(
+            "Seeded default admin user '%s'. CHANGE THE PASSWORD after first login!",
+            config.ADMIN_SEED_USERNAME,
+        )
+    else:
+        logger.info("Admin user '%s' already exists — skipping seed.", config.ADMIN_SEED_USERNAME)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("API starting up — routers mounted: /cameras, /detections, /alerts, /streams")
+    logger.info("API starting up — routers mounted: /cameras, /detections, /alerts, /streams, /auth")
     create_videos_table()
+    ensure_users_table()
+    _seed_admin_user()
     # Initialize worker lists on app.state to avoid lost-reference bugs
     if not hasattr(app.state, "workers"):
         app.state.workers = []
     if not hasattr(app.state, "ocr_workers"):
         app.state.ocr_workers = []
-    # Ensure ocr_queue exists even if main.py wasn't the entry point
-    if not hasattr(app.state, "ocr_queue") or app.state.ocr_queue is None:
+    if not hasattr(app.state, "ocr_queue"):
         import multiprocessing
-        app.state.ocr_queue = multiprocessing.Queue()
-        logger.warning("ocr_queue was not initialized by main.py — created a fallback queue")
+        from pipeline.multiprocessing_workers import MasterOcrProcess
+        import config
+        try:
+            from main import run_master_ocr
+        except ImportError:
+            import sys, os
+            sys.path.append(os.getcwd())
+            from main import run_master_ocr
+            
+        app.state.ocr_queue = multiprocessing.Queue(maxsize=200)
+        
+        # Initialize OCR workers if they don't exist
+        for _ in range(config.OCR_WORKER_COUNT):
+            worker = MasterOcrProcess(run_master_ocr, app.state.ocr_queue)
+            app.state.ocr_workers.append(worker)
     yield
-    logger.info("API shutting down — stopping workers and stream sources...")
-    # Stop pipeline workers before streams
-    for w in getattr(app.state, "workers", []):
-        w.stop()
-    for w in getattr(app.state, "ocr_workers", []):
-        w.stop()
+    logger.info("API shutting down — stopping stream sources...")
     stream_manager.shutdown()
     copilot.unload_model()
     logger.info("API shutdown complete.")
@@ -73,8 +114,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="CCTV Unified — Backend API",
-    description="Read-only Step 3.5 skeleton wrapping db/dao_cameras.py and db/dao_detections.py.",
-    version="0.1.0",
+    description="Enterprise-secured CCTV backend with JWT auth, RBAC, and real-time WebSocket alerts.",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -90,20 +131,14 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
-@app.exception_handler(ExceptionGroup)
-async def exception_group_handler(request: Request, exc: ExceptionGroup):
-    """
-    Python 3.11+ wraps concurrent errors in ExceptionGroup, which doesn't
-    inherit from Exception — the generic handler above won't catch it.
-    """
-    logger.exception("Unhandled ExceptionGroup on %s", request.url.path)
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
-
-
 # Docs endpoints are only exempt from API-key auth in mock/dev mode (the
 # default for this hackathon MVP). In "real" mode they're treated like any
 # other route and require the X-API-Key header, same as the rest of the API.
 DOCS_PATHS = {"/docs", "/openapi.json", "/redoc"}
+
+# Internal pipeline endpoints that still use the legacy X-API-Key auth
+# because they are called by backend pipeline processes (not browser clients).
+INTERNAL_PATHS = {"/alerts/internal/push", "/detections/internal/push"}
 
 # NOTE ON MIDDLEWARE ORDER: Starlette treats the *last* middleware added as
 # the outermost layer (it sees the request first and the response last), so
@@ -112,11 +147,15 @@ DOCS_PATHS = {"/docs", "/openapi.json", "/redoc"}
 #   security headers  (outermost — decorate every response, even 401/429s)
 #   └── CORS              (attach CORS headers to every response, incl. short-circuits)
 #       └── rate limiting     (throttle even repeated bad-auth requests)
-#           └── verify_api_key    (innermost of these — auth check)
-#               └── route handlers
+#           └── internal_api_key_check    (only for pipeline internal endpoints)
+#               └── route handlers (JWT auth handled by FastAPI Depends)
 
 @app.middleware("http")
-async def verify_api_key(request: Request, call_next):
+async def verify_internal_api_key(request: Request, call_next):
+    """
+    Middleware that ONLY checks X-API-Key for internal pipeline endpoints.
+    All other endpoints are secured by JWT via FastAPI's Depends(get_current_user).
+    """
     # Allow CORS preflight requests
     if request.method == "OPTIONS":
         return await call_next(request)
@@ -125,21 +164,22 @@ async def verify_api_key(request: Request, call_next):
     if request.url.path == "/health":
         return await call_next(request)
 
-    # Docs are only open without a key in mock/dev mode.
+    # Docs are open without auth in mock/dev mode.
     if config.is_mock_mode() and any(request.url.path.startswith(p) for p in DOCS_PATHS):
         return await call_next(request)
 
-    # Streams use query-param auth because browsers can't set headers on
-    # <img>/<video> src — verified per-route in api/routes_streams.py.
-    if request.url.path.startswith("/streams/"):
+    # Auth endpoints must be reachable without prior auth (login, refresh).
+    if request.url.path.startswith("/auth/"):
         return await call_next(request)
 
-    api_key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
-    if not api_key or not secrets.compare_digest(api_key, API_KEY):
-        logger.warning(f"Unauthorized API request to {request.url.path} from {request.client.host}")
-        # Security: Return generic 401 Unauthorized for missing/bad keys
-        return JSONResponse(status_code=401, content={"detail": "Unauthorized: Invalid API Key"})
+    # Internal pipeline endpoints: check legacy X-API-Key
+    if request.url.path in INTERNAL_PATHS:
+        api_key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
+        if not api_key or not secrets.compare_digest(api_key, API_KEY):
+            logger.warning(f"Unauthorized internal API request to {request.url.path} from {request.client.host}")
+            return JSONResponse(status_code=401, content={"detail": "Unauthorized: Invalid API Key"})
 
+    # All other routes: JWT auth is handled by FastAPI Depends — just pass through.
     return await call_next(request)
 
 
@@ -153,8 +193,8 @@ app.add_middleware(SlowAPIMiddleware)
 # Tightened CORS: Only allow local clients (like the desktop client's random pywebview port)
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|.*\.trycloudflare\.com|.*\.ngrok.*)(:\d+)?$",
-    allow_credentials=False,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -165,9 +205,12 @@ async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'"
     return response
 
 
+app.include_router(auth_router)
 app.include_router(cameras_router)
 app.include_router(detections_router)
 app.include_router(alerts_router)
@@ -256,19 +299,14 @@ async def toggle_scan_camera(camera_id: int, request: Request, body: ScanToggleR
     ocr_workers = getattr(app.state, "ocr_workers", [])
     ocr_queue = getattr(app.state, "ocr_queue", None)
     
-    worker = next((w for w in workers if not getattr(w, "is_video", False) and getattr(w, "camera_id", None) == camera_id), None)
+    worker = next((w for w in workers if getattr(w, "camera_id", None) == camera_id and not getattr(w, "is_video", False)), None)
     
     if body.scanning:
         if not worker:
-            cam = get_camera_by_id(camera_id)
-            if not cam:
-                raise HTTPException(status_code=404, detail="Camera not found in database")
-            
-            stream_url = cam["stream_url"]
-            # Assume real mode for existing cameras, unless stream_url is a local file
-            mode = "mock" if stream_url.endswith((".mp4", ".webm")) and not stream_url.startswith("http") else "real"
-            
-            worker = CameraFeederProcess(run_edge_feeder, camera_id, stream_url, cam["name"], mode, ocr_queue)
+            camera = get_camera_by_id(camera_id)
+            if not camera:
+                raise HTTPException(status_code=404, detail="Camera not found")
+            worker = CameraFeederProcess(run_edge_feeder, camera_id, camera["stream_url"], camera["name"], "real", ocr_queue)
             workers.append(worker)
             
         # Ensure OCR workers are running
@@ -333,3 +371,4 @@ async def toggle_scan_video(video_id: int, request: Request, body: ScanToggleReq
             worker.stop()
             await asyncio.sleep(1.5)
         return {"status": "stopped", "video_id": video_id}
+
