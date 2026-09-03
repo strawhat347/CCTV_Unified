@@ -79,47 +79,44 @@ elif _default_model_plate.exists():
     _plate_model_default = str(_default_model_plate)
 else:
     _plate_model_default = str(BASE_DIR / "yolov8n.pt")
+OCR_WORKER_COUNT = int(os.getenv("OCR_WORKER_COUNT") or "5")
 
-YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH", _plate_model_default)
-
-
+# --- YOLO Settings ---
+YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH") or str(BASE_DIR / "runs" / "detect" / "unified_alpr_v2_medium" / "weights" / "best.pt")
 
 # --- Tiled inference (SAHI-style) ---
-TILE_SIZE = int(os.getenv("TILE_SIZE", "1280"))
-TILE_OVERLAP = float(os.getenv("TILE_OVERLAP", "0.2"))
-TILE_IOU_THRESHOLD = float(os.getenv("TILE_IOU_THRESHOLD", "0.5"))
+TILE_SIZE = int(os.getenv("TILE_SIZE") or "1280")
+TILE_OVERLAP = float(os.getenv("TILE_OVERLAP") or "0.2")
+TILE_IOU_THRESHOLD = float(os.getenv("TILE_IOU_THRESHOLD") or "0.5")
 
 # --- Hierarchical (two-stage) detector ---
 # Stage 1 uses a COCO-pretrained model to find vehicles, then Stage 2
 # runs the plate detector on native-resolution vehicle crops.
-VEHICLE_MODEL_PATH = os.getenv(
-    "VEHICLE_MODEL_PATH",
-    str(BASE_DIR / "models" / "yolov8n.pt"),
-)
+VEHICLE_MODEL_PATH = os.getenv("VEHICLE_MODEL_PATH") or str(BASE_DIR / "models" / "yolov8n.pt")
 # COCO class IDs: 2=car, 3=motorcycle, 5=bus, 7=truck
 VEHICLE_CLASSES = [int(c) for c in os.getenv("VEHICLE_CLASSES", "2,3,5,7").split(",")]
-VEHICLE_PADDING = float(os.getenv("VEHICLE_PADDING", "0.2"))  # 20% pad around vehicle box
+VEHICLE_PADDING = float(os.getenv("VEHICLE_PADDING") or "0.2")  # 20% pad around vehicle box
 USE_HIERARCHICAL = os.getenv("USE_HIERARCHICAL", "true").lower() in ("true", "1", "yes")
 
 # --- Paths ---
-MOCK_VIDEO_DIR = os.getenv("MOCK_VIDEO_DIR", str(BASE_DIR / "data" / "mock_videos"))
-SEED_REGISTRY_CSV = os.getenv("SEED_REGISTRY_CSV", str(BASE_DIR / "data" / "seed_registry.csv"))
-TEST_IMAGES_DIR = os.getenv("TEST_IMAGES_DIR", str(BASE_DIR / "test_images"))
+MOCK_VIDEO_DIR = os.getenv("MOCK_VIDEO_DIR") or str(BASE_DIR / "data" / "mock_videos")
+SEED_REGISTRY_CSV = os.getenv("SEED_REGISTRY_CSV") or str(BASE_DIR / "data" / "seed_registry.csv")
+TEST_IMAGES_DIR = os.getenv("TEST_IMAGES_DIR") or str(BASE_DIR / "test_images")
 
 # --- Streaming ---
-MJPEG_FPS = int(os.getenv("MJPEG_FPS", "15"))
-MJPEG_QUALITY = int(os.getenv("MJPEG_QUALITY", "70"))
-HLS_SEGMENT_TIME = int(os.getenv("HLS_SEGMENT_TIME", "2"))
-HLS_LIST_SIZE = int(os.getenv("HLS_LIST_SIZE", "5"))
-STREAM_IDLE_TIMEOUT = int(os.getenv("STREAM_IDLE_TIMEOUT", "30"))
-MAX_CONCURRENT_STREAMS = int(os.getenv("MAX_CONCURRENT_STREAMS", "100"))
+MJPEG_FPS = int(os.getenv("MJPEG_FPS") or "15")
+MJPEG_QUALITY = int(os.getenv("MJPEG_QUALITY") or "70")
+HLS_SEGMENT_TIME = int(os.getenv("HLS_SEGMENT_TIME") or "2")
+HLS_LIST_SIZE = int(os.getenv("HLS_LIST_SIZE") or "5")
+STREAM_IDLE_TIMEOUT = int(os.getenv("STREAM_IDLE_TIMEOUT") or "30")
+MAX_CONCURRENT_STREAMS = int(os.getenv("MAX_CONCURRENT_STREAMS") or "100")
 
 # --- AI Copilot ---
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.1"))
-OLLAMA_TOP_P = float(os.getenv("OLLAMA_TOP_P", "0.1"))
-OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "120"))
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL") or "qwen2.5:1.5b"
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434"
+OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE") or "0.1")
+OLLAMA_TOP_P = float(os.getenv("OLLAMA_TOP_P") or "0.1")
+OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT") or "120")
 
 
 def is_mock_mode() -> bool:
