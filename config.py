@@ -43,8 +43,9 @@ load_dotenv(BASE_DIR / ".env")
 MODE = os.getenv("MODE", "mock")
 
 # --- Sentinel Camera Grid API ---
-SENTINEL_API_HOST = os.getenv("SENTINEL_API_HOST", "https://live.corp8.cloud")
+SENTINEL_API_HOST = os.getenv("SENTINEL_API_HOST", "https://cctv.corp8.cloud")
 SENTINEL_API_KEY = os.getenv("SENTINEL_API_KEY")
+SENTINEL_EMAIL = os.getenv("SENTINEL_EMAIL", "")
 
 # --- Database ---
 DB_HOST = os.getenv("DB_HOST", "localhost")
@@ -52,7 +53,7 @@ DB_PORT = int(os.getenv("DB_PORT", "3306"))
 DB_NAME = os.getenv("DB_NAME", "cctv_unified")
 DB_USER = os.getenv("DB_USER", "root")
 DB_PASS = os.getenv("DB_PASS", "")
-DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "10"))
+DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "20"))
 
 # --- API Security ---
 API_KEY = os.getenv("API_KEY")
@@ -63,6 +64,7 @@ if not API_KEY:
         "and put it in your .env file as API_KEY=... (see .env.example)."
     )
 API_PORT = int(os.getenv("API_PORT", "8002"))
+API_HOST = os.getenv("API_HOST", "0.0.0.0")
 
 # --- Distributed Processing ---
 # Number of centralized GPU OCR workers to spawn. Each takes ~800MB VRAM.
@@ -128,12 +130,15 @@ def is_mock_mode() -> bool:
 
 
 # --- Hardware Acceleration ---
-# Set USE_GPU to "true" in your .env file when you have a capable GPU setup.
+# Set USE_GPU to "true" in your .env file when you have a capable GPU setup for YOLO.
 USE_GPU_ENV = os.getenv("USE_GPU", "false").lower() in ("true", "1", "yes")
+
+# Set OCR_USE_GPU to "true" in .env if you have paddlepaddle-gpu installed with CUDA.
+OCR_USE_GPU_ENV = os.getenv("OCR_USE_GPU", "false").lower() in ("true", "1", "yes")
 
 def should_use_gpu() -> bool:
     """
-    Convenience helper used to decide whether to load models onto GPU or CPU.
+    Convenience helper used to decide whether to load YOLO models onto GPU or CPU.
     Returns True if USE_GPU is enabled in env and PyTorch detects CUDA.
     """
     if not USE_GPU_ENV:
@@ -141,6 +146,29 @@ def should_use_gpu() -> bool:
     
     try:
         import torch
-        return torch.cuda.is_available()
-    except ImportError:
+        return bool(torch.cuda.is_available())
+    except Exception:
         return False
+
+def should_ocr_use_gpu() -> bool:
+    """
+    Returns True if OCR_USE_GPU is enabled in .env and PaddlePaddle detects CUDA.
+    Does NOT import torch, avoiding Windows DLL collisions in OCR workers.
+    """
+    if not OCR_USE_GPU_ENV:
+        return False
+    try:
+        import paddle
+        return bool(paddle.is_compiled_with_cuda())
+    except Exception:
+        return False
+
+
+import re
+
+def sanitize_url(url: str) -> str:
+    """Mask embedded username and password in RTSP/HTTP URLs to prevent credential leakage in logs."""
+    if not url or not isinstance(url, str):
+        return url
+    return re.sub(r'://([^:@/]+):([^@/]+)@', r'://\1:***@', url)
+

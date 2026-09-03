@@ -1,0 +1,6 @@
+plate_number,status,flags,owner_name,vehicle_make,description
+GJ05CD6789,clear,,Rahul Sharma,Honda City,Regular employee vehicle
+MH12AB1234,stolen,reported_stolen_mumbai,Priya Patel,Maruti Swift,Reported stolen from Mumbai last week. Do not approach.
+DL01CA0001,flagged,"expired_insurance,unpaid_fines",Amit Singh,Toyota Fortuner,VIP vehicle with pending challans.
+BR01CA1234,flagged,wanted_for_hit_and_run,Suresh Kumar,Hyundai Creta,Involved in hit and run incident near Sector 5.
+KA01AB1234,clear,,Neha Gupta,Tata Nexon,Authorized visitor.

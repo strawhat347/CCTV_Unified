@@ -40,6 +40,12 @@ export default function EditCameraModal({ isOpen, onClose, onSave, camera, isLoa
       alert("Name, Stream URL, City, District, Location, Department Name, Department ID, Latitude, and Longitude are required.");
       return;
     }
+    const ALLOWED_PROTOCOLS = ['rtsp://', 'rtsps://', 'http://', 'https://'];
+    const streamUrl = (editData.stream_url || '').trim();
+    if (!ALLOWED_PROTOCOLS.some(proto => streamUrl.startsWith(proto))) {
+      alert("Stream URL must start with rtsp://, rtsps://, http://, or https://");
+      return;
+    }
     onSave(camera.camera_id, editData);
   };
 

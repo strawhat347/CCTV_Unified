@@ -96,7 +96,7 @@ class PyWebViewShell(BaseShell):
                 f"window.USE_EXTERNAL_CDN = {json.dumps(not config.is_mock_mode())};"
             )
 
-        webview.start(on_loaded, window, http_server=True)
+        webview.start(on_loaded, window, http_server=True, debug=False)
 
 if __name__ == "__main__":
     shell = PyWebViewShell()

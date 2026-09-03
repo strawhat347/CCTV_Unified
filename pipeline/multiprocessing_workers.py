@@ -81,10 +81,10 @@ class CameraFeederProcess:
             logger.info(f"Camera Feeder {self.camera_id} started (PID: {self._process.pid})")
 
     def stop(self):
-        self._stop_event.set()
         with self._lock:
+            self._stop_event.set()
             if self._process is not None:
-                self._process.join(timeout=3.0)
+                self._process.join(timeout=5.0)
                 if self._process and self._process.is_alive():
                     logger.warning(f"Feeder {self.camera_id} hung. Terminating.")
                     self._process.terminate()
@@ -94,6 +94,13 @@ class CameraFeederProcess:
         with self._lock:
             return self._process is not None and self._process.is_alive()
 
+    def is_crashed(self) -> bool:
+        """Check if the process exited abnormally (non-zero exit code)."""
+        with self._lock:
+            return (self._process is not None and
+                    not self._process.is_alive() and
+                    self._process.exitcode not in (None, 0))
+
     @staticmethod
     def _run_wrapper(run_func, camera_id, source_url, camera_name, mode, ocr_queue, stop_event):
         try:
@@ -102,3 +109,9 @@ class CameraFeederProcess:
             pass
         except Exception as e:
             logger.exception(f"Fatal error in feeder {camera_id}: {e}")
+            try:
+                from db.dao_cameras import update_camera_status
+                update_camera_status(camera_id, "error")
+            except Exception:
+                pass
+

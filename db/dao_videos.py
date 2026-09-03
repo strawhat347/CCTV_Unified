@@ -25,6 +25,9 @@ def insert_video(filename: str, filepath: str) -> int:
         cursor.execute('INSERT INTO video_files (filename, filepath) VALUES (%s, %s)', (filename, filepath))
         conn.commit()
         return cursor.lastrowid
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         cursor.close()
         conn.close()
@@ -56,6 +59,9 @@ def delete_video(video_id: int) -> bool:
         cursor.execute('DELETE FROM video_files WHERE id = %s', (video_id,))
         conn.commit()
         return cursor.rowcount > 0
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         cursor.close()
         conn.close()

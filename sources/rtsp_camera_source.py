@@ -25,11 +25,12 @@ class RTSPCameraSource(BaseCameraSource):
 
     def connect(self) -> None:
         """Connect to the live RTSP stream using FFmpeg backend."""
-        logger.info(f"[{self.camera_id}] Connecting to RTSP stream: {self.rtsp_url}")
+        from config import sanitize_url
+        logger.info(f"[{self.camera_id}] Connecting to RTSP stream: {sanitize_url(self.rtsp_url)}")
         # Use CAP_FFMPEG explicitly
         self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
         if not self.cap.isOpened():
-            raise RuntimeError(f"Failed to connect to RTSP stream: {self.rtsp_url}")
+            raise RuntimeError(f"Failed to connect to RTSP stream: {sanitize_url(self.rtsp_url)}")
         
     def _reconnect(self):
         """Reconnect to the stream with exponential backoff as per Sentinel guidelines."""

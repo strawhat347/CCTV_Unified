@@ -129,7 +129,8 @@ async def import_cameras_bulk(file: UploadFile = File(...)):
         if not name or not stream_url:
             continue
             
-        if not stream_url.startswith(("https://", "rtsps://")):
+        ALLOWED_PROTOCOLS = ("rtsp://", "rtsps://", "http://", "https://")
+        if not any(stream_url.startswith(proto) for proto in ALLOWED_PROTOCOLS):
             continue
             
         location = row.get("location", "").strip()
@@ -170,3 +171,55 @@ async def import_cameras_bulk(file: UploadFile = File(...)):
         
     inserted = bulk_insert_cameras(cameras_data)
     return {"status": "success", "inserted": inserted}
+
+
+@router.get("/{camera_id}/test", response_model=dict)
+def test_camera_connection(camera_id: int):
+    """Probes the camera stream to verify if it is alive, measuring latency and resolution."""
+    camera = get_camera_by_id(camera_id)
+    if camera is None:
+        raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
+        
+    url = camera["stream_url"]
+    import os, time
+    import cv2
+    
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000"
+    start_time = time.perf_counter()
+    cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+    
+    if not cap.isOpened():
+        elapsed = round((time.perf_counter() - start_time) * 1000, 1)
+        return {
+            "camera_id": camera_id,
+            "name": camera.get("name"),
+            "alive": False,
+            "latency_ms": elapsed,
+            "error": "Failed to connect to camera stream (timed out or unreachable)"
+        }
+        
+    ret, frame = cap.read()
+    total_time = round((time.perf_counter() - start_time) * 1000, 1)
+    if not ret or frame is None:
+        cap.release()
+        return {
+            "camera_id": camera_id,
+            "name": camera.get("name"),
+            "alive": False,
+            "latency_ms": total_time,
+            "error": "Connected but failed to decode video frame"
+        }
+        
+    h, w = frame.shape[:2]
+    fps = round(cap.get(cv2.CAP_PROP_FPS) or 0.0, 1)
+    cap.release()
+    
+    return {
+        "camera_id": camera_id,
+        "name": camera.get("name"),
+        "alive": True,
+        "latency_ms": total_time,
+        "resolution": f"{w}x{h}",
+        "fps": fps
+    }
+

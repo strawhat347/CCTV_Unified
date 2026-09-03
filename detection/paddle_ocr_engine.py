@@ -69,7 +69,9 @@ class PaddleOcrEngine(BaseOcrEngine):
         # Bypass PaddleX startup network hang
         os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 
-        use_gpu = config.should_use_gpu()
+        # PaddleOCR uses PaddlePaddle (not PyTorch).
+        # Toggled independently via OCR_USE_GPU in .env (calls config.should_ocr_use_gpu).
+        use_gpu = config.should_ocr_use_gpu()
         
         from pathlib import Path
         custom_rec_dir = Path("models/en_PP-OCRv4_rec_infer").resolve()

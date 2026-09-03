@@ -54,8 +54,18 @@ async def lifespan(app: FastAPI):
         app.state.workers = []
     if not hasattr(app.state, "ocr_workers"):
         app.state.ocr_workers = []
+    # Ensure ocr_queue exists even if main.py wasn't the entry point
+    if not hasattr(app.state, "ocr_queue") or app.state.ocr_queue is None:
+        import multiprocessing
+        app.state.ocr_queue = multiprocessing.Queue()
+        logger.warning("ocr_queue was not initialized by main.py — created a fallback queue")
     yield
-    logger.info("API shutting down — stopping stream sources...")
+    logger.info("API shutting down — stopping workers and stream sources...")
+    # Stop pipeline workers before streams
+    for w in getattr(app.state, "workers", []):
+        w.stop()
+    for w in getattr(app.state, "ocr_workers", []):
+        w.stop()
     stream_manager.shutdown()
     copilot.unload_model()
     logger.info("API shutdown complete.")
@@ -77,6 +87,16 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     from leaking to clients — logs the real error server-side instead.
     """
     logger.exception("Unhandled error on %s", request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
+@app.exception_handler(ExceptionGroup)
+async def exception_group_handler(request: Request, exc: ExceptionGroup):
+    """
+    Python 3.11+ wraps concurrent errors in ExceptionGroup, which doesn't
+    inherit from Exception — the generic handler above won't catch it.
+    """
+    logger.exception("Unhandled ExceptionGroup on %s", request.url.path)
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
@@ -133,7 +153,7 @@ app.add_middleware(SlowAPIMiddleware)
 # Tightened CORS: Only allow local clients (like the desktop client's random pywebview port)
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|.*\.trycloudflare\.com|.*\.ngrok.*)(:\d+)?$",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -244,11 +264,11 @@ async def toggle_scan_camera(camera_id: int, request: Request, body: ScanToggleR
             if not cam:
                 raise HTTPException(status_code=404, detail="Camera not found in database")
             
-            stream_url = cam.stream_url
+            stream_url = cam["stream_url"]
             # Assume real mode for existing cameras, unless stream_url is a local file
             mode = "mock" if stream_url.endswith((".mp4", ".webm")) and not stream_url.startswith("http") else "real"
             
-            worker = CameraFeederProcess(run_edge_feeder, camera_id, stream_url, cam.name, mode, ocr_queue)
+            worker = CameraFeederProcess(run_edge_feeder, camera_id, stream_url, cam["name"], mode, ocr_queue)
             workers.append(worker)
             
         # Ensure OCR workers are running

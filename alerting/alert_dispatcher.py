@@ -14,8 +14,15 @@ from registry.base_plate_registry import RegistryRecord
 
 logger = logging.getLogger("alert_dispatcher")
 
+# Auto-detect TLS — matches how the server decides to use HTTPS
+import os as _os
+import ssl as _ssl
+_USE_TLS = _os.path.exists("cert.pem")
+_BROADCAST_PROTOCOL = "https" if _USE_TLS else "http"
+_VERIFY_CERT = _ssl.create_default_context(cafile="cert.pem") if _USE_TLS else True
+
 # Reusable HTTP client and thread pool for non-blocking broadcasts
-_http_client = httpx.Client(timeout=1.0)
+_http_client = httpx.Client(timeout=1.0, verify=_VERIFY_CERT)
 _broadcast_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="AlertBroadcaster")
 
 # Broadcast host — defaults to loopback but can be overridden for
@@ -25,7 +32,7 @@ _BROADCAST_HOST = getattr(config, "API_HOST", "127.0.0.1")
 def _send_broadcast(alert_data: dict):
     try:
         response = _http_client.post(
-            f"http://{_BROADCAST_HOST}:{config.API_PORT}/alerts/internal/push", 
+            f"{_BROADCAST_PROTOCOL}://{_BROADCAST_HOST}:{config.API_PORT}/alerts/internal/push", 
             json=alert_data,
             headers={"X-API-Key": config.API_KEY}
         )

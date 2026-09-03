@@ -23,8 +23,7 @@ class CameraEdgeFeeder:
         self.detector = detector
         self.ocr_queue = ocr_queue
         self.sample_interval = sample_interval
-        
-        self.track_manager = TrackManager(stale_after_frames=2)
+        self.track_manager = TrackManager(stale_after_frames=15, max_crops=5, sharpness_threshold=60.0)
         self.camera_location = None
         self._running = False
         self.stats = {"frames_read": 0, "tracks_finalized": 0}
@@ -62,16 +61,19 @@ class CameraEdgeFeeder:
             
             for box in active_tracks:
                 # If the detector doesn't support tracking (e.g. Hierarchical), assign a unique ID per detection
-                # so it just gets processed as a single-frame "track".
                 t_id = box.track_id if box.track_id is not None else next(_track_id_counter)
-                
                 bbox = (int(box.x1), int(box.y1), int(box.x2), int(box.y2))
                 conf = float(box.confidence)
+
+                # Add 12% padding around plate bounding box to prevent clipping edge characters
+                bw = max(1, bbox[2] - bbox[0])
+                bh = max(1, bbox[3] - bbox[1])
+                pad_x = int(bw * 0.12)
+                pad_y = int(bh * 0.12)
                 
-                # Ensure valid crop boundaries
                 h, w = frame.shape[:2]
-                y1, y2 = max(0, bbox[1]), min(h, bbox[3])
-                x1, x2 = max(0, bbox[0]), min(w, bbox[2])
+                y1, y2 = max(0, bbox[1] - pad_y), min(h, bbox[3] + pad_y)
+                x1, x2 = max(0, bbox[0] - pad_x), min(w, bbox[2] + pad_x)
                 
                 if y2 <= y1 or x2 <= x1:
                     continue
@@ -95,12 +97,15 @@ class CameraEdgeFeeder:
     def _push_to_queue(self, ft: FinalizedTrack):
         self.stats["tracks_finalized"] += 1
         logger.info(f"Edge Feeder {self.camera_id} pushing track {ft.track_id} to OCR queue with {len(ft.sharp_crops)} sharp crops")
-        # Push payload to central AI
-        self.ocr_queue.put({
-            "camera_id": self.camera_id,
-            "camera_location": self.camera_location,
-            "ft": ft
-        })
+        # Push payload to central AI with backpressure
+        try:
+            self.ocr_queue.put({
+                "camera_id": self.camera_id,
+                "camera_location": self.camera_location,
+                "ft": ft
+            }, timeout=5.0)
+        except Exception:
+            logger.warning(f"OCR queue full — dropping track {ft.track_id} from camera {self.camera_id}")
 
     def stop(self) -> None:
         self._running = False
@@ -146,19 +151,23 @@ class CentralOcrWorker:
         for crop in ft.sharp_crops:
             if crop is None:
                 continue
-                
-            # Run both traditional CV enhancement and AI upscaling concurrently
-            # Our voting algorithm will weed out any mistakes
-            cv_crop = self.enhancer.enhance_traditional_cv(crop)
-            ai_crop = self.enhancer.enhance_safe_ai(crop)
             
-            res_cv = self.ocr_engine.read_text(cv_crop)
-            if res_cv and res_cv.text:
-                reads.append((res_cv.text, res_cv.confidence))
+            try:
+                # Run both traditional CV enhancement and AI upscaling concurrently
+                # Our voting algorithm will weed out any mistakes
+                cv_crop = self.enhancer.enhance_traditional_cv(crop)
+                ai_crop = self.enhancer.enhance_safe_ai(crop)
                 
-            res_ai = self.ocr_engine.read_text(ai_crop)
-            if res_ai and res_ai.text:
-                reads.append((res_ai.text, res_ai.confidence))
+                res_cv = self.ocr_engine.read_text(cv_crop)
+                if res_cv and res_cv.text:
+                    reads.append((res_cv.text, res_cv.confidence))
+                    
+                res_ai = self.ocr_engine.read_text(ai_crop)
+                if res_ai and res_ai.text:
+                    reads.append((res_ai.text, res_ai.confidence))
+            except Exception as e:
+                logger.warning(f"Failed to process crop for track {ft.track_id}: {e}")
+                continue
                 
         plate_text, ocr_conf = None, 0.0
         if reads:
@@ -180,7 +189,8 @@ class CentralOcrWorker:
             import time
             import re
             
-            _STANDARD_PLATE_REGEX = re.compile(r'^[A-Z]{2}[0-9]{1,2}[A-Z]{1,2}[0-9]{4}$')
+            # Supports 2-letter state, 1-2 digit district, 1-3 series letters, and 1-4 registration digits
+            _STANDARD_PLATE_REGEX = re.compile(r'^[A-Z]{2}[0-9]{1,2}[A-Z]{1,3}[0-9]{1,4}$')
             _BH_PLATE_REGEX = re.compile(r'^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$')
             
             is_valid_rto = bool(_STANDARD_PLATE_REGEX.match(plate_text)) or bool(_BH_PLATE_REGEX.match(plate_text))
@@ -243,15 +253,19 @@ class CentralOcrWorker:
                     "image_path": img_path,
                     "detected_at": datetime.now(timezone.utc).isoformat()
                 }
-                import os
-                protocol = "https" if os.path.exists("cert.pem") else "http"
+                import os, ssl
+                use_tls = os.path.exists("cert.pem")
+                protocol = "https" if use_tls else "http"
+                verify_cert = ssl.create_default_context(cafile="cert.pem") if use_tls else True
                 api_host = getattr(config, "API_HOST", "127.0.0.1")
+                if api_host in ("0.0.0.0", ""):
+                    api_host = "127.0.0.1"
                 httpx.post(
                     f"{protocol}://{api_host}:{config.API_PORT}/detections/internal/push",
                     json=det_data,
                     headers={"X-API-Key": config.API_KEY},
                     timeout=3.0,
-                    verify=True
+                    verify=verify_cert
                 )
             except Exception as e:
                 logger.warning(f"Failed to broadcast raw detection: {e}")
@@ -290,4 +304,5 @@ class CentralOcrWorker:
         fname = f"cam{camera_id}_{safe_text}_{timestamp}.jpg"
         path = os.path.join("data", "crops", fname)
         cv2.imwrite(path, crop)
-        return path
+        # Return filename only — the static mount serves data/crops/ at /crops/
+        return fname

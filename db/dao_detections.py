@@ -48,6 +48,9 @@ def insert_detection(
         )
         conn.commit()
         return cursor.lastrowid
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         cursor.close()
         conn.close()
@@ -124,6 +127,9 @@ def delete_detection(detection_id: int) -> bool:
         )
         conn.commit()
         return cursor.rowcount > 0
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         cursor.close()
-        conn.close()
+        conn.close()

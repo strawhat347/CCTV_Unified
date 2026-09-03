@@ -212,7 +212,7 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
   return (
     <div
       ref={cellRef}
-      className={`relative group w-full h-full bg-black overflow-hidden transition-all duration-200 border-border-primary
+      className={`relative isolate group w-full h-full bg-black overflow-hidden transition-all duration-200 border-border-primary
         ${isFullscreen ? 'rounded-none border-none' : 'rounded-lg border'}`}
       onDoubleClick={toggleFullscreen}
     >
@@ -244,7 +244,6 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
             onPlay={() => setIsPlaying(true)}
             onPause={() => {
               setIsPlaying(false);
-              if (isScanning) handleToggleScan();
             }}
             onTimeUpdate={() => {
               if (videoRef.current && videoRef.current.duration) {
@@ -320,7 +319,7 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
       </div>
 
       {/* Unified YouTube-Style Bottom Bar */}
-      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent pt-8 pb-2 px-3 z-50 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1">
+      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent pt-8 pb-2 px-3 z-20 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1">
         
         {/* Progress Bar (Scrubber) */}
         {isLocalVideo && (

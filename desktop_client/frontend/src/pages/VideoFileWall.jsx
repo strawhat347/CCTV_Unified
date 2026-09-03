@@ -1,10 +1,17 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { AlertCircle, Loader2, Search, Plus, Navigation, Layers, X, Trash2, Film, CheckCircle2 } from 'lucide-react';
-import { getApiBase, getApiKey } from '../services/api';
+import { getApiBase, getApiKey, toggleVideoScan } from '../services/api';
 import VideoManagementModal from '../components/VideoManagementModal';
 
 export default function VideoFileWall() {
-  const [activeVideos, setActiveVideos] = useState([]);
+  const [activeVideos, setActiveVideos] = useState(() => {
+    try {
+      const saved = localStorage.getItem('videowall_activeVideos');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -27,6 +34,11 @@ export default function VideoFileWall() {
   };
 
   useEffect(() => { loadData(); }, []);
+
+  useEffect(() => {
+    localStorage.setItem('videowall_activeVideos', JSON.stringify(activeVideos));
+    window.dispatchEvent(new CustomEvent('videowall_videos_changed'));
+  }, [activeVideos]);
 
   const handleToggleVideo = useCallback((video) => {
     setActiveVideos(prev => {
@@ -202,8 +214,21 @@ export default function VideoFileWall() {
         ) : (
           <div className={`w-full grid gap-2 ${count <= 16 ? 'h-full' : ''}`} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: count <= 16 ? `repeat(${rows}, minmax(0, 1fr))` : 'none', gridAutoRows: count > 16 ? 'minmax(200px, 25vh)' : 'auto' }}>
             {activeVideos.map((video, index) => (
-              <div key={video.id} className="relative group w-full h-full bg-black overflow-hidden rounded-lg border border-border-primary">
-                <video src={`${getApiBase()}/videos/play/${video.id}?api_key=${encodeURIComponent(getApiKey() || "")}`} className="w-full h-full object-contain" controls playsInline />
+              <div key={video.id} className="relative isolate group w-full h-full bg-black overflow-hidden rounded-lg border border-border-primary">
+                <video
+                  src={`${getApiBase()}/videos/play/${video.id}?api_key=${encodeURIComponent(getApiKey() || "")}`}
+                  className="w-full h-full object-contain"
+                  controls
+                  playsInline
+                  onEnded={async () => {
+                    try {
+                      await toggleVideoScan(video.id, false);
+                      window.dispatchEvent(new CustomEvent('ai_status_changed'));
+                    } catch (err) {
+                      console.error('Failed to terminate AI scan on video end:', err);
+                    }
+                  }}
+                />
                 <button onClick={() => handleRemoveActive(video.id)} className="absolute top-1.5 right-1.5 p-1 bg-danger/80 hover:bg-danger text-white rounded backdrop-blur-sm transition-colors opacity-0 group-hover:opacity-100 z-10" title="Remove video"><X className="w-3.5 h-3.5" /></button>
                 <div className="absolute top-1.5 left-1.5 z-10 px-1.5 py-0.5 bg-black/50 rounded backdrop-blur-sm pointer-events-none text-white font-bold text-xs truncate max-w-[80%]">{video.filename}</div>
               </div>

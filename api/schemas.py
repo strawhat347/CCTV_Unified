@@ -62,8 +62,9 @@ class CameraCreate(BaseModel):
     @field_validator("stream_url")
     @classmethod
     def validate_stream_url(cls, v: str) -> str:
-        if not v.startswith(("rtsps://", "https://")):
-            raise ValueError('stream_url must be a secure remote URL (rtsps/https). Local files, unencrypted connections, or mock protocols are not allowed.')
+        ALLOWED_PROTOCOLS = ("rtsp://", "rtsps://", "http://", "https://")
+        if not any(v.startswith(proto) for proto in ALLOWED_PROTOCOLS):
+            raise ValueError('stream_url must start with rtsp://, rtsps://, http://, or https://. Local files and other protocols are not allowed.')
         return v
 
 
@@ -88,8 +89,9 @@ class CameraUpdate(BaseModel):
         if v is None:
             return v
             
-        if not v.startswith(("rtsps://", "https://")):
-            raise ValueError('stream_url must be a secure remote URL (rtsps/https). Local files, unencrypted connections, or mock protocols are not allowed.')
+        ALLOWED_PROTOCOLS = ("rtsp://", "rtsps://", "http://", "https://")
+        if not any(v.startswith(proto) for proto in ALLOWED_PROTOCOLS):
+            raise ValueError('stream_url must start with rtsp://, rtsps://, http://, or https://. Local files and other protocols are not allowed.')
         return v
 
 

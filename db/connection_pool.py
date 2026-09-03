@@ -45,12 +45,15 @@ def get_pool():
 
 def get_connection():
     """
-    Borrow a connection from the pool.
+    Borrow a connection from the pool with automatic reconnection.
 
     Caller is responsible for calling .close() on it when done — this
     does NOT actually close the TCP connection, it just returns it to
     the pool for reuse (same as releasing a buffer back to a pool
     allocator instead of freeing the underlying memory).
+
+    The ping() call detects and recovers from stale connections that
+    timed out while idle in the pool.
 
     Usage:
         conn = get_connection()
@@ -61,4 +64,13 @@ def get_connection():
         finally:
             conn.close()
     """
-    return get_pool().get_connection()
+    conn = get_pool().get_connection()
+    try:
+        conn.ping(reconnect=True, attempts=3, delay=1)
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        conn = get_pool().get_connection()
+    return conn

@@ -47,6 +47,9 @@ def insert_camera(
         )
         conn.commit()  # like flushing a transaction — nothing is persisted until this runs
         return cursor.lastrowid  # the auto-generated camera_id
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         cursor.close()
         conn.close()
@@ -127,6 +130,9 @@ def bulk_insert_cameras(cameras_data: list[tuple]) -> int:
             
         conn.commit()
         return total_inserted
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         cursor.close()
         conn.close()
@@ -146,6 +152,9 @@ def delete_all_cameras() -> int:
         cursor.execute("ALTER TABLE cameras AUTO_INCREMENT = 1")
         conn.commit()
         return deleted_count
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         cursor.close()
         conn.close()
@@ -193,6 +202,9 @@ def update_camera(camera_id: int, camera_data: dict) -> bool:
         # We checked existence above, so return True even if rowcount is 0 
         # (which happens if the update data is identical to existing data)
         return True
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         cursor.close()
         conn.close()
@@ -212,6 +224,9 @@ def update_camera_status(camera_id: int, status: str) -> bool:
         )
         conn.commit()
         return cursor.rowcount > 0  # rowcount = how many rows the UPDATE touched
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         cursor.close()
         conn.close()
@@ -234,6 +249,9 @@ def delete_camera(camera_id: int) -> bool:
         deleted = cursor.rowcount > 0
         conn.commit()
         return deleted
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         cursor.close()
         conn.close()

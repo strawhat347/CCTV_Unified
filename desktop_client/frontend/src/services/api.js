@@ -249,7 +249,7 @@ export async function releaseStream(cameraId) {
  */
 export async function deleteAllLogs() {
   await waitForApi();
-  const res = await fetch(`${getApiBase()}/detections`, {
+  const res = await fetch(`${getApiBase()}/detections?confirm=DELETE_ALL_LOGS`, {
     method: 'DELETE',
     headers: getHeaders()
   });
@@ -294,4 +294,19 @@ export async function toggleCameraScan(cameraId, scanning) {
   if (!res.ok) throw new Error(`POST /system/scan/${cameraId} failed: ${res.status}`);
   return res.json();
 }
+
+/**
+ * Start or stop the backend scanning worker for a specific offline video file.
+ */
+export async function toggleVideoScan(videoId, scanning) {
+  await waitForApi();
+  const res = await fetch(`${getApiBase()}/system/scan/video/${videoId}`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ scanning }),
+  });
+  if (!res.ok) throw new Error(`POST /system/scan/video/${videoId} failed: ${res.status}`);
+  return res.json();
+}
+
 

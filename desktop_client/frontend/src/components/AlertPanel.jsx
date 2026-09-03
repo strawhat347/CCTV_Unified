@@ -40,6 +40,10 @@ export default function AlertPanel({ onClose, onAlertCountChange }) {
       .then((data) => { setAlerts(data); setError(null); })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
+      
+    const handleLogsCleared = () => setAlerts([]);
+    window.addEventListener('logsCleared', handleLogsCleared);
+    return () => window.removeEventListener('logsCleared', handleLogsCleared);
   }, []);
 
   // WebSocket for live alerts

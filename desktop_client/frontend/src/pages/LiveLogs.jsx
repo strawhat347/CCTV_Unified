@@ -44,6 +44,7 @@ export default function LiveLogs() {
     try {
       await deleteAllLogs();
       setLogs([]);
+      window.dispatchEvent(new CustomEvent('logsCleared'));
     } catch (err) {
       console.error('Failed to delete logs:', err);
       alert('Failed to delete logs');

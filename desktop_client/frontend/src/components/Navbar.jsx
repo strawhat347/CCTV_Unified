@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Plus, Bell, ShieldAlert, Bot, RefreshCw, Power, Cpu } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { toggleScan, fetchSystemStatus } from '../services/api';
@@ -8,9 +8,38 @@ export default function Navbar({ alertCount = 0, onToggleAlertPanel, onToggleAIP
   const [isScanning, setIsScanning] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [scanMenuOpen, setScanMenuOpen] = useState(false);
+  const scanCardRef = useRef(null);
+  const scanButtonRef = useRef(null);
   const [activeAICameras, setActiveAICameras] = useState([]);
+  const [activeAIVideos, setActiveAIVideos] = useState([]);
   const [wallCameras, setWallCameras] = useState([]);
+  const [wallVideos, setWallVideos] = useState([]);
   const location = useLocation();
+
+  useEffect(() => {
+    if (!scanMenuOpen) return;
+    const handleClickOutside = (e) => {
+      if (
+        scanCardRef.current && 
+        !scanCardRef.current.contains(e.target) &&
+        scanButtonRef.current && 
+        !scanButtonRef.current.contains(e.target)
+      ) {
+        setScanMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setScanMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [scanMenuOpen]);
   
   const syncWallCameras = () => {
     try {
@@ -19,6 +48,23 @@ export default function Navbar({ alertCount = 0, onToggleAlertPanel, onToggleAIP
     } catch (e) { console.error(e); }
   };
 
+  const syncWallVideos = () => {
+    try {
+      const saved = localStorage.getItem('videowall_activeVideos');
+      setWallVideos(saved ? JSON.parse(saved) : []);
+    } catch (e) { console.error(e); }
+  };
+
+  const refreshSystemStatus = useCallback(() => {
+    fetchSystemStatus()
+      .then(status => {
+        setIsScanning(status.workers_active);
+        setActiveAICameras(status.active_cameras || []);
+        setActiveAIVideos(status.active_videos || []);
+      })
+      .catch(err => console.error("Failed to fetch system status:", err));
+  }, []);
+
   useEffect(() => {
     syncWallCameras();
     window.addEventListener('videowall_cameras_changed', syncWallCameras);
@@ -26,14 +72,22 @@ export default function Navbar({ alertCount = 0, onToggleAlertPanel, onToggleAIP
   }, []);
 
   useEffect(() => {
-    // Initial fetch to sync button state with backend
-    fetchSystemStatus()
-      .then(status => {
-        setIsScanning(status.workers_active);
-        setActiveAICameras(status.active_cameras || []);
-      })
-      .catch(err => console.error("Failed to fetch system status:", err));
-  }, [scanMenuOpen]);
+    syncWallVideos();
+    window.addEventListener('videowall_videos_changed', syncWallVideos);
+    return () => window.removeEventListener('videowall_videos_changed', syncWallVideos);
+  }, []);
+
+  useEffect(() => {
+    syncWallCameras();
+    syncWallVideos();
+    refreshSystemStatus();
+    window.addEventListener('ai_status_changed', refreshSystemStatus);
+    const interval = setInterval(refreshSystemStatus, 3000);
+    return () => {
+      window.removeEventListener('ai_status_changed', refreshSystemStatus);
+      clearInterval(interval);
+    };
+  }, [location.pathname, scanMenuOpen, refreshSystemStatus]);
 
   const handleToggleScan = async () => {
     if (isTransitioning) return;
@@ -44,6 +98,7 @@ export default function Navbar({ alertCount = 0, onToggleAlertPanel, onToggleAIP
       setIsScanning(targetState);
       if (!targetState) {
         setActiveAICameras([]);
+        setActiveAIVideos([]);
       }
     } catch (err) {
       console.error("Failed to toggle scan:", err);
@@ -66,7 +121,7 @@ export default function Navbar({ alertCount = 0, onToggleAlertPanel, onToggleAIP
   const title = getPageTitle();
 
   return (
-    <header className="h-12 bg-bg-secondary border-b border-border-primary flex items-center justify-between px-4 shrink-0 z-40 select-none">
+    <header className="h-12 bg-bg-secondary border-b border-border-primary flex items-center justify-between px-4 shrink-0 relative z-[60] select-none">
       <div className="flex items-center flex-1 min-w-0">
         <h1 className="text-lg font-bold text-text-bright tracking-tight truncate flex items-center gap-2">
           <span>Gujarat <span className="text-accent">Sentinel</span></span>
@@ -138,6 +193,7 @@ export default function Navbar({ alertCount = 0, onToggleAlertPanel, onToggleAIP
               {isScanning && location.pathname.startsWith('/live') && (
                 <div className="relative mr-1">
                   <button 
+                    ref={scanButtonRef}
                     onClick={() => setScanMenuOpen(!scanMenuOpen)} 
                     className="flex items-center justify-center gap-1.5 px-2 h-7 rounded text-xs font-medium transition-colors text-text-secondary hover:text-accent hover:bg-bg-hover border border-border-secondary"
                     title="Assign AI"
@@ -146,86 +202,120 @@ export default function Navbar({ alertCount = 0, onToggleAlertPanel, onToggleAIP
                     <span>Assign AI</span>
                   </button>
                   
-                  {scanMenuOpen && (
-                    <div className="absolute right-0 top-full mt-2 w-64 bg-bg-elevated border border-border-secondary rounded-lg shadow-xl z-50 overflow-hidden flex flex-col">
-                      <div className="p-3 border-b border-border-secondary bg-bg-secondary flex justify-between items-center">
-                        <span className="font-semibold text-sm text-text-primary">Assign AI to Cameras</span>
-                        <button onClick={() => setScanMenuOpen(false)} className="text-text-muted hover:text-text-primary">
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                      <div className="max-h-64 overflow-y-auto p-2">
-                                {(() => {
-                                  const cams = wallCameras;
-                                  if (cams.length === 0) {
-                                    return <div className="text-xs text-text-muted text-center py-4">No cameras in Video Wall</div>;
-                                  }
-                                  return (
-                                    <>
-                                      <button 
-                                        onClick={async () => {
-                                          const allScanning = cams.every(cam => activeAICameras.includes(cam.camera_id));
-                                          const newState = !allScanning;
-                                          
-                                          // Optimistic update
-                                          setActiveAICameras(prev => {
-                                            let updated = [...prev];
-                                            if (newState) {
-                                              cams.forEach(cam => { if (!updated.includes(cam.camera_id)) updated.push(cam.camera_id); });
-                                            } else {
-                                              const ids = cams.map(c => c.camera_id);
-                                              updated = updated.filter(id => !ids.includes(id));
-                                            }
-                                            return updated;
-                                          });
+                  {scanMenuOpen && (() => {
+                    const isVideoMode = location.pathname.startsWith('/live/videos');
+                    const items = isVideoMode ? wallVideos : wallCameras;
+                    const activeItems = isVideoMode ? activeAIVideos : activeAICameras;
+                    const setActiveItems = isVideoMode ? setActiveAIVideos : setActiveAICameras;
+                    const title = isVideoMode ? "Videos" : "Cameras";
+                    const idField = isVideoMode ? "id" : "camera_id";
+                    const nameField = isVideoMode ? "filename" : "name";
 
+                    return (
+                      <>
+                        {/* Backdrop to close the card when clicking anywhere outside */}
+                        <div 
+                          className="fixed inset-0 z-40" 
+                          onClick={() => setScanMenuOpen(false)} 
+                        />
+                        <div 
+                          ref={scanCardRef}
+                          className="absolute right-0 top-full mt-2 w-80 bg-bg-elevated border border-border-secondary rounded-lg shadow-2xl z-50 overflow-hidden flex flex-col"
+                        >
+                          <div className="p-3 border-b border-border-secondary bg-bg-secondary flex justify-between items-center">
+                            <span className="font-semibold text-sm text-text-primary">Assign AI to {title}</span>
+                            <button onClick={() => setScanMenuOpen(false)} className="text-text-muted hover:text-text-primary">
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                          <div className="max-h-72 overflow-y-auto p-2">
+                            {items.length === 0 ? (
+                              <div className="text-xs text-text-muted text-center py-4">No {title.toLowerCase()} in Video Wall</div>
+                            ) : (
+                              <>
+                                <button 
+                                  onClick={async () => {
+                                    const allScanning = items.every(item => activeItems.includes(item[idField]));
+                                    const newState = !allScanning;
+                                    
+                                    // Optimistic update
+                                    setActiveItems(prev => {
+                                      let updated = [...prev];
+                                      if (newState) {
+                                        items.forEach(item => { if (!updated.includes(item[idField])) updated.push(item[idField]); });
+                                      } else {
+                                        const ids = items.map(i => i[idField]);
+                                        updated = updated.filter(id => !ids.includes(id));
+                                      }
+                                      return updated;
+                                    });
+
+                                    try {
+                                      const api = await import('../services/api');
+                                      const toggleFn = isVideoMode ? api.toggleVideoScan : api.toggleCameraScan;
+                                      await Promise.all(items.map(item => toggleFn(item[idField], newState)));
+                                      const status = await api.fetchSystemStatus();
+                                      setIsScanning(status.workers_active);
+                                    } catch(e) { 
+                                      console.error("Toggle all error", e);
+                                    }
+                                  }}
+                                  className={`w-full py-1.5 text-xs font-medium rounded transition-colors bg-bg-secondary hover:bg-bg-hover text-text-primary border border-border-primary`}
+                                >
+                                  {items.every(item => activeItems.includes(item[idField])) ? 'Deassign All' : 'Assign All'}
+                                </button>
+                                <div className="h-px bg-border-secondary my-2"></div>
+                                {items.map(item => {
+                                  const itemId = item[idField];
+                                  const itemIsScanning = activeItems.includes(itemId);
+                                  const itemName = item[nameField] || (isVideoMode ? 'Video' : 'Camera');
+                                  return (
+                                    <div key={itemId} className="flex items-center justify-between p-2 rounded hover:bg-bg-hover gap-3 transition-colors">
+                                      <div className="flex-1 min-w-0 pr-1">
+                                        <span 
+                                          className="text-xs font-medium text-text-primary block truncate select-none"
+                                          title={`#${itemId} - ${itemName}`}
+                                        >
+                                          #{itemId} - {itemName}
+                                        </span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={async (e) => {
+                                          e.stopPropagation();
+                                          const newState = !itemIsScanning;
+                                          // Optimistic update
+                                          setActiveItems(prev => newState ? [...prev, itemId] : prev.filter(id => id !== itemId));
                                           try {
-                                            const { toggleCameraScan } = await import('../services/api');
-                                            await Promise.all(cams.map(cam => toggleCameraScan(cam.camera_id, newState)));
-                                          } catch(e) { 
-                                            console.error("Toggle all error", e);
-                                            // Revert on error (fetch true state from server later or just toggle back)
+                                            const api = await import('../services/api');
+                                            const toggleFn = isVideoMode ? api.toggleVideoScan : api.toggleCameraScan;
+                                            await toggleFn(itemId, newState);
+                                            const status = await api.fetchSystemStatus();
+                                            setIsScanning(status.workers_active);
+                                          } catch (err) { 
+                                            console.error("Toggle error:", err);
+                                            setActiveItems(prev => !newState ? [...prev, itemId] : prev.filter(id => id !== itemId));
                                           }
                                         }}
-                                        className={`w-full py-1.5 text-xs font-medium rounded transition-colors bg-bg-secondary hover:bg-bg-hover text-text-primary border border-border-primary`}
+                                        className={`shrink-0 w-10 h-5 rounded-full relative transition-colors cursor-pointer focus:outline-none ${
+                                          itemIsScanning ? 'bg-success' : 'bg-bg-secondary border border-border-primary'
+                                        }`}
+                                        title={itemIsScanning ? "Stop AI Scan" : "Start AI Scan"}
                                       >
-                                        {cams.every(cam => activeAICameras.includes(cam.camera_id)) ? 'Deassign All' : 'Assign All'}
+                                        <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 pointer-events-none ${
+                                          itemIsScanning ? 'translate-x-5' : 'translate-x-0'
+                                        }`}></div>
                                       </button>
-                                      <div className="h-px bg-border-secondary my-2"></div>
-                                      {cams.map(cam => {
-                                        const camIsScanning = activeAICameras.includes(cam.camera_id);
-                                        return (
-                                          <div key={cam.camera_id} className="flex items-center justify-between p-2 rounded hover:bg-bg-hover">
-                                            <div className="flex flex-col overflow-hidden">
-                                              <span className="text-xs font-medium text-text-primary truncate">#{cam.camera_id} - {cam.name || `Camera`}</span>
-                                            </div>
-                                            <button
-                                              onClick={async () => {
-                                                const newState = !camIsScanning;
-                                                // Optimistic update
-                                                setActiveAICameras(prev => newState ? [...prev, cam.camera_id] : prev.filter(id => id !== cam.camera_id));
-                                                try {
-                                                  const { toggleCameraScan } = await import('../services/api');
-                                                  await toggleCameraScan(cam.camera_id, newState);
-                                                } catch (err) { 
-                                                  console.error(err);
-                                                  // Revert on error
-                                                  setActiveAICameras(prev => !newState ? [...prev, cam.camera_id] : prev.filter(id => id !== cam.camera_id));
-                                                }
-                                              }}
-                                              className={`w-10 h-5 rounded-full relative transition-colors ${camIsScanning ? 'bg-success' : 'bg-bg-secondary border border-border-primary'}`}
-                                            >
-                                              <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${camIsScanning ? 'translate-x-5' : 'translate-x-0'}`}></div>
-                                            </button>
-                                          </div>
-                                        );
-                                      })}
-                                    </>
+                                    </div>
                                   );
-                                })()}
-                      </div>
-                    </div>
-                  )}
+                                })}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               )}
 

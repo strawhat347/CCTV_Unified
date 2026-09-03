@@ -42,8 +42,10 @@ export default function CameraManagementModal({ isOpen, onClose, onImport, onCle
       alert("Name, Stream URL, City, District, Location, Department Name, Department ID, Latitude, and Longitude are required.");
       return;
     }
-    if (!newCamera.stream_url.startsWith('https://') && !newCamera.stream_url.startsWith('rtsps://')) {
-      alert("Stream URL must be a secure remote URL (https:// or rtsps://). Local files, unencrypted connections, or mock protocols are no longer allowed.");
+    const ALLOWED_PROTOCOLS = ['rtsp://', 'rtsps://', 'http://', 'https://'];
+    const streamUrl = newCamera.stream_url.trim();
+    if (!ALLOWED_PROTOCOLS.some(proto => streamUrl.startsWith(proto))) {
+      alert("Stream URL must start with rtsp://, rtsps://, http://, or https://");
       return;
     }
     onAddCamera(newCamera);

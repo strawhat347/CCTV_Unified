@@ -127,7 +127,8 @@ class MJPEGStreamSource:
                 self._cap = self._cv2.VideoCapture(self.source_url)
                 
             if not getattr(self, "_cap", None) or not self._cap.isOpened():
-                logger.error(f"Cannot open video source for camera {self.camera_id}: {self.source_url}")
+                from config import sanitize_url
+                logger.error(f"Cannot open video source for camera {self.camera_id}: {sanitize_url(self.source_url)}")
                 self._running = False
                 return
 
@@ -137,6 +138,23 @@ class MJPEGStreamSource:
                 if not ok:
                     # End of file or stream dropped
                     logger.warning(f"Stream ended for camera {self.camera_id}")
+                    # Attempt RTSP reconnection
+                    if self.source_url.startswith(("rtsp://", "rtsps://")):
+                        logger.info(f"Attempting RTSP reconnect for camera {self.camera_id}...")
+                        time.sleep(2)
+                        try:
+                            self._cap.release()
+                        except Exception:
+                            pass
+                        if self.source_url.startswith("rtsp://"):
+                            self._cap = self._cv2.VideoCapture(self.source_url, self._cv2.CAP_FFMPEG)
+                        else:
+                            self._cap = self._cv2.VideoCapture(self.source_url)
+                        if self._cap.isOpened():
+                            logger.info(f"Reconnected to camera {self.camera_id}")
+                            continue
+                        else:
+                            logger.error(f"Failed to reconnect to camera {self.camera_id}")
                     break
                 # Encode to JPEG bytes
                 ret, buf = self._cv2.imencode('.jpg', frame, [self._cv2.IMWRITE_JPEG_QUALITY, MJPEG_QUALITY])  # type: ignore
@@ -323,8 +341,9 @@ class StreamManager:
             raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
         
         url = camera["stream_url"]
-        if not url.startswith(("https://", "rtsps://", "rtsp://")):
-            raise HTTPException(status_code=400, detail="Only https://, rtsps:// and rtsp:// protocols are allowed for camera streams")
+        ALLOWED_PROTOCOLS = ("rtsp://", "rtsps://", "http://", "https://")
+        if not any(url.startswith(proto) for proto in ALLOWED_PROTOCOLS):
+            raise HTTPException(status_code=400, detail="Only rtsp://, rtsps://, http://, and https:// protocols are allowed for camera streams")
             
         return url
 
@@ -444,27 +463,8 @@ def get_stream_mode():
 
 @router.get("/{camera_id}/snapshot")
 def get_snapshot(camera_id: int, api_key: str = Query(...)):
-    """
-    GET /streams/{camera_id}/snapshot?api_key=... — single JPEG frame.
-    Useful for thumbnails in the camera panel.
-    """
-    _verify_stream_api_key(api_key)
-
-    # Always use MJPEG source for snapshots (lighter than spinning up ffmpeg)
-    try:
-        stream = stream_manager.get_mjpeg_stream(camera_id)
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-    try:
-        # Wait briefly for the first frame
-        for _ in range(50):
-            jpeg = stream.get_jpeg()
-            if jpeg:
-                return Response(content=jpeg, media_type="image/jpeg")
-            time.sleep(0.1)
-        raise HTTPException(status_code=503, detail="No frame available yet")
-    finally:
-        stream_manager.release_mjpeg_viewer(camera_id)
+    """Snapshot endpoint removed — was causing 503 storms under load."""
+    raise HTTPException(status_code=410, detail="Snapshot endpoint has been removed. Use the MJPEG or HLS stream instead.")
 
 
 @router.get("/{camera_id}/mjpeg")

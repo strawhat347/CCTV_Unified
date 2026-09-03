@@ -1,3 +1,9 @@
+# Pre-initialize PyTorch runtime DLLs on Windows before sub-processes/other DLLs load
+try:
+    import torch
+except Exception:
+    pass
+
 import logging
 import sys
 from pathlib import Path
@@ -115,9 +121,15 @@ def run_edge_feeder(camera_id: int, source_url: str, camera_name: str, mode: str
                 bbox = (int(box.x1), int(box.y1), int(box.x2), int(box.y2))
                 conf = float(box.confidence)
                 
+                # Add 12% padding around plate bounding box to preserve outer characters
+                bw = max(1, bbox[2] - bbox[0])
+                bh = max(1, bbox[3] - bbox[1])
+                pad_x = int(bw * 0.12)
+                pad_y = int(bh * 0.12)
+                
                 h, w = frame.shape[:2]
-                y1, y2 = max(0, bbox[1]), min(h, bbox[3])
-                x1, x2 = max(0, bbox[0]), min(w, bbox[2])
+                y1, y2 = max(0, bbox[1] - pad_y), min(h, bbox[3] + pad_y)
+                x1, x2 = max(0, bbox[0] - pad_x), min(w, bbox[2] + pad_x)
                 
                 if y2 <= y1 or x2 <= x1:
                     continue
@@ -144,7 +156,7 @@ def main():
     logger.info(f"CCTV Unified MVP (Distributed Queue Mode) starting in '{config.MODE}' mode...")
     
     # 1. Create the Shared OCR Queue
-    ocr_queue = multiprocessing.Queue()
+    ocr_queue = multiprocessing.Queue(maxsize=200)
     
     # 2. Spin up Master OCR Workers (The GPU Pool)
     ocr_workers = []
@@ -168,10 +180,10 @@ def main():
         import os
         if os.path.exists("key.pem") and os.path.exists("cert.pem"):
             logger.info("TLS Certificate found! Starting in HTTPS mode.")
-            uvicorn.run("api.main:app", host="127.0.0.1", port=config.API_PORT, reload=False, ssl_keyfile="key.pem", ssl_certfile="cert.pem")
+            uvicorn.run("api.main:app", host=config.API_HOST, port=config.API_PORT, reload=False, ssl_keyfile="key.pem", ssl_certfile="cert.pem")
         else:
             logger.info("No TLS certs found. Starting in HTTP mode.")
-            uvicorn.run("api.main:app", host="127.0.0.1", port=config.API_PORT, reload=False)
+            uvicorn.run("api.main:app", host=config.API_HOST, port=config.API_PORT, reload=False)
     finally:
         logger.info("Shutting down... stopping all workers.")
         for cw in camera_workers:

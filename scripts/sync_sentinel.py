@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -10,7 +10,7 @@ import config
 
 def sync():
     print(f"Connecting to Sentinel Grid at {config.SENTINEL_API_HOST}...")
-    client = SentinelClient(config.SENTINEL_API_HOST, config.SENTINEL_API_KEY)
+    client = SentinelClient(config.SENTINEL_API_HOST, config.SENTINEL_API_KEY, config.SENTINEL_EMAIL)
     cameras = client.get_cameras()
     
     if not cameras:
@@ -41,7 +41,7 @@ def sync():
             location=cam.get('location', 'Sentinel Grid'),
             status="active"
         )
-        print(f" ✓ Added {name} ({stream_url})")
+        print(f" [OK] Added {name} ({stream_url})")
 
 if __name__ == "__main__":
     sync()
