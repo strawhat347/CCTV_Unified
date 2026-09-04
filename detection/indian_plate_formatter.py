@@ -43,7 +43,7 @@ D = r'[0-9OISBZGDQJLTAC]'
 _PLATE_REGEX = re.compile(
     f'({L}{{2}}'       # State code (2 letters)
     f'{D}{{2}}'        # District number (2 digits)
-    f'{L}{{1,3}}'      # Series letters (1-3 letters)
+    f'{L}{{0,3}}'      # Series letters (0-3 letters)
     f'{D}{{1,4}})'     # Registration number (1-4 digits)
 )
 
@@ -156,8 +156,8 @@ def extract_indian_plate(raw_text: str) -> Optional[str]:
     # Prefer the longest match (most complete plate read)
     best_span, _ = max(valid_matches, key=lambda x: x[1])
 
-    # Minimum length sanity check: shortest valid plates are ~8 chars
-    if len(best_span) < 8:
+    # Minimum length sanity check: shortest valid plates are ~6 chars (e.g. VIP plates)
+    if len(best_span) < 6:
         return None
 
     return best_span
@@ -173,7 +173,7 @@ def normalize_plate_chars(plate: str) -> str:
     Returns:
         Normalised plate string.
     """
-    if not plate or len(plate) < 8:
+    if not plate or len(plate) < 6:
         return plate
 
     # BH-series plates (e.g. 22BH1234AB) have a completely different

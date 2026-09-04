@@ -266,6 +266,9 @@ class HLSStreamSource:
             "-hls_list_size", str(HLS_LIST_SIZE),
             "-hls_flags", "delete_segments+append_list+independent_segments",
             "-hls_segment_filename", segment_pattern,
+            # Security: restrict protocols and extensions to prevent LFI via malicious playlists
+            "-protocol_whitelist", "file,http,https,tcp,tls,crypto,rtsp,rtp,udp",
+            "-allowed_extensions", "ts",
             playlist,
         ]
 
@@ -341,6 +344,11 @@ class StreamManager:
             raise HTTPException(status_code=404, detail=f"Camera {camera_id} not found")
         
         url = camera["stream_url"]
+        
+        # In mock mode, allow local file paths for testing
+        if config.is_mock_mode():
+            return url
+        
         ALLOWED_PROTOCOLS = ("rtsp://", "rtsps://", "http://", "https://")
         if not any(url.startswith(proto) for proto in ALLOWED_PROTOCOLS):
             raise HTTPException(status_code=400, detail="Only rtsp://, rtsps://, http://, and https:// protocols are allowed for camera streams")
@@ -448,11 +456,24 @@ stream_manager = StreamManager()
 #  API Endpoints
 # ═══════════════════════════════════════════════════════════
 
-def _verify_stream_api_key(api_key: str):
-    """Verify API key from query param (browsers can't set headers on <img>/<video> src)."""
+def _verify_stream_auth(api_key: str = None, token: str = None):
+    """Verify auth from query param — supports both legacy API key and JWT token."""
+    # Try JWT token first
+    if token:
+        try:
+            from api.auth import decode_token
+            payload = decode_token(token)
+            if payload.get('type') == 'access':
+                return  # Valid JWT
+        except Exception:
+            pass  # Fall through to API key check
+    
+    # Fall back to legacy API key
     import secrets
-    if not api_key or not secrets.compare_digest(api_key, config.API_KEY):
-        raise HTTPException(status_code=401, detail="Unauthorized: Invalid API Key")
+    if api_key and secrets.compare_digest(api_key, config.API_KEY):
+        return  # Valid API key
+    
+    raise HTTPException(status_code=401, detail="Unauthorized: Invalid credentials")
 
 
 @router.get("/mode")
@@ -462,18 +483,19 @@ def get_stream_mode():
 
 
 @router.get("/{camera_id}/snapshot")
-def get_snapshot(camera_id: int, api_key: str = Query(...)):
+def get_snapshot(camera_id: int, api_key: Optional[str] = Query(None), token: Optional[str] = Query(None)):
     """Snapshot endpoint removed — was causing 503 storms under load."""
+    _verify_stream_auth(api_key, token)
     raise HTTPException(status_code=410, detail="Snapshot endpoint has been removed. Use the MJPEG or HLS stream instead.")
 
 
 @router.get("/{camera_id}/mjpeg")
-def mjpeg_stream(camera_id: int, api_key: str = Query(...)):
+def mjpeg_stream(camera_id: int, api_key: Optional[str] = Query(None), token: Optional[str] = Query(None)):
     """
     GET /streams/{camera_id}/mjpeg?api_key=... — MJPEG stream.
     Used as fallback when ffmpeg is not available, or directly if preferred.
     """
-    _verify_stream_api_key(api_key)
+    _verify_stream_auth(api_key, token)
     try:
         stream = stream_manager.get_mjpeg_stream(camera_id)
     except RuntimeError as e:
@@ -501,12 +523,12 @@ def mjpeg_stream(camera_id: int, api_key: str = Query(...)):
 
 
 @router.get("/{camera_id}/hls/stream.m3u8")
-def hls_playlist(camera_id: int, api_key: str = Query(...)):
+def hls_playlist(camera_id: int, api_key: Optional[str] = Query(None), token: Optional[str] = Query(None)):
     """
     GET /streams/{camera_id}/hls/stream.m3u8?api_key=... — HLS playlist.
     Returns the .m3u8 manifest file for the HLS player.
     """
-    _verify_stream_api_key(api_key)
+    _verify_stream_auth(api_key, token)
 
     if not FFMPEG_AVAILABLE:
         raise HTTPException(status_code=503, detail="HLS not available — ffmpeg not found")
@@ -535,24 +557,24 @@ def hls_playlist(camera_id: int, api_key: str = Query(...)):
 
 
 @router.get("/{camera_id}/hls/release")
-def hls_release(camera_id: int, api_key: str = Query(...)):
+def hls_release(camera_id: int, api_key: Optional[str] = Query(None), token: Optional[str] = Query(None)):
     """
     GET /streams/{camera_id}/hls/release?api_key=... — Release viewer slot.
     Called by the frontend when a video cell is unloaded.
     """
-    _verify_stream_api_key(api_key)
+    _verify_stream_auth(api_key, token)
     stream_manager.release_hls_viewer(camera_id)
     return {"status": "released"}
 
 
 @router.get("/{camera_id}/hls/{filename}")
-def hls_segment(camera_id: int, filename: str, api_key: Optional[str] = None):
+def hls_segment(camera_id: int, filename: str, api_key: Optional[str] = None, token: Optional[str] = None):
     """
     GET /streams/{camera_id}/hls/{filename}?api_key=... — HLS segment file (.ts).
     api_key is optional because HLS clients don't pass query params to segments.
     """
-    if api_key:
-        _verify_stream_api_key(api_key)
+    if api_key or token:
+        _verify_stream_auth(api_key, token)
 
     if not FFMPEG_AVAILABLE:
         raise HTTPException(status_code=503, detail="HLS not available — ffmpeg not found")

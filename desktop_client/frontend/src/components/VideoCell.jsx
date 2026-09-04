@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import Hls from 'hls.js';
 import { Video, X, Maximize2, Minimize2, ChevronLeft, RefreshCw, AlertTriangle, Power, Play, Pause, Rewind, FastForward } from 'lucide-react';
 import { getStreamUrl, getHlsUrl, releaseStream, toggleCameraScan, fetchSystemStatus, getApiBase, getApiKey } from '../services/api';
+import { toast } from './Toast';
 
 /**
  * VideoCell — Individual grid cell in the Fluid Video Wall.
@@ -88,6 +89,8 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
       }, 2000);
     }
   };
+
+  const [shouldLoad, setShouldLoad] = useState(false);
 
   // Stagger the mounting of heavy video feeds to prevent browser lockup
   useEffect(() => {
@@ -285,7 +288,7 @@ export default function VideoCell({ camera, index = 0, streamMode, onRemove }) {
       <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
         {isFullscreen && (
           <button
-            onClick={() => alert('Vehicle bounding system: To be implemented.')}
+            onClick={() => toast.info('Vehicle bounding system: To be implemented.')}
             className="p-1 bg-accent/80 hover:bg-accent text-white rounded backdrop-blur-sm transition-colors"
             title="Toggle Vehicle Bounding System"
           >

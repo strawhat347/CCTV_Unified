@@ -37,7 +37,7 @@ export default function AlertPanel({ onClose, onAlertCountChange }) {
   // Fetch initial alerts
   useEffect(() => {
     fetchAlerts(20)
-      .then((data) => { setAlerts(data); setError(null); })
+      .then((data) => { setAlerts(Array.isArray(data) ? data : []); setError(null); })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
       

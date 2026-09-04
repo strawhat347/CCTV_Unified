@@ -9,10 +9,13 @@ from unittest.mock import patch
 from datetime import datetime
 
 from api.main import app
+from api.auth import create_access_token
 import config
 
 client = TestClient(app)
-client.headers.update({"X-API-Key": config.API_KEY})
+# Generate a real valid token for the test client
+test_token = create_access_token({"sub": "admin", "role": "admin", "uid": 1})
+client.headers.update({"Authorization": f"Bearer {test_token}"})
 
 # Dummy data mimicking DAO outputs
 MOCK_CAMERA = {

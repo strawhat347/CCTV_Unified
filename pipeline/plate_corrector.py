@@ -40,12 +40,11 @@ class PlateCorrector:
     def correct(self, text: str) -> str:
         # Remove spaces and non-alphanumeric chars
         cleaned = re.sub(r'[^A-Z0-9]', '', text.upper())
-        if len(cleaned) < 8 or len(cleaned) > 10:
+        if len(cleaned) < 5 or len(cleaned) > 11:
             return text  # Leave it alone if it's completely malformed
 
-        # Check for BH Series: YY BH #### XX (9 or 10 chars)
-        # Check if index 2 and 3 look like BH (e.g., BH, 8H, B4, 84)
-        if len(cleaned) in [9, 10]:
+        # Check for BH Series: YY BH #### XX
+        if len(cleaned) >= 8:
             char2, char3 = cleaned[2], cleaned[3]
             # If it loosely matches "BH"
             if char2 in ['B', '8'] and char3 in ['H', '4', 'N', 'M']:
@@ -56,36 +55,45 @@ class PlateCorrector:
                 # BH
                 corrected += "BH"
                 # #### (Numbers)
-                for i in range(4, 8):
+                for i in range(4, min(8, len(cleaned))):
                     corrected += self._fix_char(cleaned[i], 'number')
                 # XX (Letters)
                 for i in range(8, len(cleaned)):
                     corrected += self._fix_char(cleaned[i], 'letter')
                 return corrected
 
-        # Standard Indian Format: LL NN LL NNNN (10 chars) or LL NN L NNNN (9 chars)
-        if len(cleaned) in [9, 10]:
-            corrected = ""
-            # State Code (LL)
-            corrected += self._fix_char(cleaned[0], 'letter')
-            corrected += self._fix_char(cleaned[1], 'letter')
+        # Standard Indian Format dynamic correction
+        chars = list(cleaned)
+        
+        # State Code (first 2 must be letters)
+        if len(chars) >= 2:
+            chars[0] = self._fix_char(chars[0], 'letter')
+            chars[1] = self._fix_char(chars[1], 'letter')
             
-            # RTO Code (NN)
-            corrected += self._fix_char(cleaned[2], 'number')
-            corrected += self._fix_char(cleaned[3], 'number')
+        # District Code (next 2 must be numbers)
+        for i in range(2, min(4, len(chars))):
+            chars[i] = self._fix_char(chars[i], 'number')
             
-            # For remaining, it depends on length
-            if len(cleaned) == 10:
-                # LL NNNN
-                corrected += self._fix_char(cleaned[4], 'letter')
-                corrected += self._fix_char(cleaned[5], 'letter')
-                for i in range(6, 10):
-                    corrected += self._fix_char(cleaned[i], 'number')
-            else:
-                # L NNNN
-                corrected += self._fix_char(cleaned[4], 'letter')
-                for i in range(5, 9):
-                    corrected += self._fix_char(cleaned[i], 'number')
-            return corrected
-
-        return text
+        if len(chars) > 4:
+            # Registration digits are at the end (up to 4)
+            # Find where registration digits start by scanning from the end
+            reg_start = len(chars)
+            scan_limit = max(4, len(chars) - 4)
+            for i in range(len(chars) - 1, scan_limit - 1, -1):
+                if chars[i].isdigit() or chars[i] in self.letter_to_number:
+                    reg_start = i
+                else:
+                    break
+                    
+            if reg_start < 5:
+                reg_start = 5  # Leave at least one series letter if length permits, or start at 5 (index 4) if 0 series letters
+                
+            # Series letters
+            for i in range(4, min(reg_start, len(chars))):
+                chars[i] = self._fix_char(chars[i], 'letter')
+                
+            # Registration numbers
+            for i in range(reg_start, len(chars)):
+                chars[i] = self._fix_char(chars[i], 'number')
+                
+        return ''.join(chars)

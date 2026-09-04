@@ -1,13 +1,17 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { AlertCircle, Loader2, Search, Plus, Navigation, Layers, X, Trash2, Film, CheckCircle2 } from 'lucide-react';
-import { getApiBase, getApiKey, toggleVideoScan } from '../services/api';
+import { fetchVideos, deleteVideo, getVideoPlayUrl, toggleVideoScan } from '../services/api';
 import VideoManagementModal from '../components/VideoManagementModal';
+import { toast } from '../components/Toast';
+import { confirmModal } from '../components/ConfirmModal';
 
 export default function VideoFileWall() {
   const [activeVideos, setActiveVideos] = useState(() => {
     try {
       const saved = localStorage.getItem('videowall_activeVideos');
-      return saved ? JSON.parse(saved) : [];
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
     }
@@ -21,9 +25,7 @@ export default function VideoFileWall() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${getApiBase()}/videos/list?api_key=${encodeURIComponent(getApiKey() || "")}`);
-      if (!res.ok) throw new Error('Failed to load videos');
-      const data = await res.json();
+      const data = await fetchVideos();
       setVideos(data || []);
       setError(null);
     } catch (err) {
@@ -81,16 +83,21 @@ export default function VideoFileWall() {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this video?')) return;
+    const ok = await confirmModal({
+      title: 'Delete Video',
+      message: 'Are you sure you want to delete this video file?',
+      confirmText: 'Delete',
+      isDanger: true,
+    });
+    if (!ok) return;
     try {
       setLoading(true);
-      const res = await fetch(`${getApiBase()}/videos/delete/${id}?api_key=${encodeURIComponent(getApiKey() || "")}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('Delete failed');
+      await deleteVideo(id);
       setActiveVideos(prev => prev.filter(v => v.id !== id));
       await loadData();
-      alert('Video deleted successfully!');
+      toast.success('Video deleted successfully!');
     } catch (err) {
-      alert(`Delete failed: ${err.message}`);
+      toast.error(`Delete failed: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -216,7 +223,7 @@ export default function VideoFileWall() {
             {activeVideos.map((video, index) => (
               <div key={video.id} className="relative isolate group w-full h-full bg-black overflow-hidden rounded-lg border border-border-primary">
                 <video
-                  src={`${getApiBase()}/videos/play/${video.id}?api_key=${encodeURIComponent(getApiKey() || "")}`}
+                  src={getVideoPlayUrl(video.id)}
                   className="w-full h-full object-contain"
                   controls
                   playsInline

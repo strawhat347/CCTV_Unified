@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: cctv_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASS:-Sanji@827123}
+      MYSQL_DATABASE: ${DB_NAME:-cctv_unified}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    restart: unless-stopped
+    command: --default-authentication-plugin=caching_sha2_password --sql_mode=""
+
+  backend:
+    build: .
+    container_name: cctv_backend
+    ports:
+      - "${API_PORT:-8002}:8002"
+    environment:
+      - DB_HOST=mysql
+      - DB_USER=${DB_USER:-root}
+      - DB_PASS=${DB_PASS:-Sanji@827123}
+      - DB_NAME=${DB_NAME:-cctv_unified}
+      - MODE=production
+    volumes:
+      - ./data:/app/data
+      - ./runs:/app/runs
+      - ./models:/app/models
+    depends_on:
+      - mysql
+    restart: unless-stopped
+
+volumes:
+  mysql_data:

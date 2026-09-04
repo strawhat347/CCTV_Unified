@@ -1,0 +1,11 @@
+.git
+.venv*
+venv/
+node_modules/
+desktop_client/frontend/node_modules/
+__pycache__/
+*.pyc
+.env
+data/
+datasets/
+test_images/

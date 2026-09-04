@@ -17,11 +17,12 @@ logger = logging.getLogger("pipeline")
 _track_id_counter = itertools.count(start=1_000_000)
 
 class CameraEdgeFeeder:
-    def __init__(self, camera_id: int, source: BaseCameraSource, detector: BaseDetector, ocr_queue: Queue, sample_interval: int = 1):
+    def __init__(self, camera_id: int, source: BaseCameraSource, detector: BaseDetector, fast_queue: Queue, heavy_queue: Queue, sample_interval: int = 1):
         self.camera_id = camera_id
         self.source = source
         self.detector = detector
-        self.ocr_queue = ocr_queue
+        self.fast_queue = fast_queue
+        self.heavy_queue = heavy_queue
         self.sample_interval = sample_interval
         self.track_manager = TrackManager(stale_after_frames=15, max_crops=5, sharpness_threshold=60.0)
         self.camera_location = None
@@ -101,14 +102,25 @@ class CameraEdgeFeeder:
             
     def _push_to_queue(self, ft: FinalizedTrack):
         self.stats["tracks_finalized"] += 1
-        logger.info(f"Edge Feeder {self.camera_id} pushing track {ft.track_id} to OCR queue with {len(ft.sharp_crops)} sharp crops")
+        
+        import cv2
+        blur_score = 0.0
+        if ft.best_crop is not None:
+            gray = cv2.cvtColor(ft.best_crop, cv2.COLOR_BGR2GRAY)
+            blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
+            
+        logger.info(f"Edge Feeder {self.camera_id} pushing track {ft.track_id} to OCR queue with {len(ft.sharp_crops)} sharp crops (Blur Score: {blur_score:.1f})")
         # Push payload to central AI with backpressure
         try:
-            self.ocr_queue.put({
+            payload = {
                 "camera_id": self.camera_id,
                 "camera_location": self.camera_location,
                 "ft": ft
-            }, timeout=5.0)
+            }
+            if blur_score > 60.0:
+                self.fast_queue.put(payload, timeout=5.0)
+            else:
+                self.heavy_queue.put(payload, timeout=5.0)
         except Exception:
             logger.warning(f"OCR queue full — dropping track {ft.track_id} from camera {self.camera_id}")
 
@@ -118,15 +130,16 @@ class CameraEdgeFeeder:
 
 
 class CentralOcrWorker:
-    def __init__(self, ocr_engine: BaseOcrEngine, rule_engine: Any, ocr_queue: Queue):
+    def __init__(self, ocr_engine: BaseOcrEngine, rule_engine: Any, ocr_queue: Queue, cooldown_cache: dict, worker_type: str = "both"):
         from detection.enhancers import ImageEnhancer
         self.ocr_engine = ocr_engine
         self.rule_engine = rule_engine
         self.ocr_queue = ocr_queue
         self.enhancer = ImageEnhancer()
         self._running = False
-        self.cooldown_cache = {}
+        self.cooldown_cache = cooldown_cache
         self.cooldown_seconds = 30
+        self.worker_type = worker_type
         
     def run(self):
         logger.info("Central AI Worker started and listening to OCR queue.")
@@ -158,18 +171,17 @@ class CentralOcrWorker:
                 continue
             
             try:
-                # Run both traditional CV enhancement and AI upscaling concurrently
-                # Our voting algorithm will weed out any mistakes
-                cv_crop = self.enhancer.enhance_traditional_cv(crop)
-                ai_crop = self.enhancer.enhance_safe_ai(crop)
-                
-                res_cv = self.ocr_engine.read_text(cv_crop)
-                if res_cv and res_cv.text:
-                    reads.append((res_cv.text, res_cv.confidence))
-                    
-                res_ai = self.ocr_engine.read_text(ai_crop)
-                if res_ai and res_ai.text:
-                    reads.append((res_ai.text, res_ai.confidence))
+                if self.worker_type in ("fast", "both"):
+                    cv_crop = self.enhancer.enhance_traditional_cv(crop)
+                    res_cv = self.ocr_engine.read_text(cv_crop)
+                    if res_cv and res_cv.text:
+                        reads.append((res_cv.text, res_cv.confidence))
+                        
+                if self.worker_type in ("heavy", "both"):
+                    ai_crop = self.enhancer.enhance_safe_ai(crop)
+                    res_ai = self.ocr_engine.read_text(ai_crop)
+                    if res_ai and res_ai.text:
+                        reads.append((res_ai.text, res_ai.confidence))
             except Exception as e:
                 logger.warning(f"Failed to process crop for track {ft.track_id}: {e}")
                 continue
@@ -194,8 +206,8 @@ class CentralOcrWorker:
             import time
             import re
             
-            # Supports 2-letter state, 1-2 digit district, 1-3 series letters, and 1-4 registration digits
-            _STANDARD_PLATE_REGEX = re.compile(r'^[A-Z]{2}[0-9]{1,2}[A-Z]{1,3}[0-9]{1,4}$')
+            # Supports 2-letter state, 1-2 digit district, 0-3 series letters, and 1-4 registration digits
+            _STANDARD_PLATE_REGEX = re.compile(r'^[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{1,4}$')
             _BH_PLATE_REGEX = re.compile(r'^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$')
             
             is_valid_rto = bool(_STANDARD_PLATE_REGEX.match(plate_text)) or bool(_BH_PLATE_REGEX.match(plate_text))
@@ -300,12 +312,17 @@ class CentralOcrWorker:
         return voted_text, avg_conf
 
     def _save_crop(self, crop, camera_id, text) -> str:
-        import os, cv2
+        import os, cv2, re
         from datetime import datetime
         os.makedirs("data/crops", exist_ok=True)
         # Create a more professional name: camX_plate_YYYYMMDD_HHMMSS.jpg
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         safe_text = text if text and text != "unknown" else "unreadable"
+        # Security: strip any path separators or special chars from plate text
+        # to prevent path traversal via adversarial OCR output
+        safe_text = re.sub(r'[^A-Za-z0-9_\-]', '', safe_text)
+        if not safe_text:
+            safe_text = "unreadable"
         fname = f"cam{camera_id}_{safe_text}_{timestamp}.jpg"
         path = os.path.join("data", "crops", fname)
         cv2.imwrite(path, crop)

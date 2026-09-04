@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Upload, Loader2 } from 'lucide-react';
-import { getApiBase, getApiKey } from '../services/api';
+import { uploadVideo } from '../services/api';
+import { toast } from './Toast';
 
 export default function VideoManagementModal({ isOpen, onClose, onUploaded }) {
   const [isUploading, setIsUploading] = useState(false);
@@ -15,21 +16,13 @@ export default function VideoManagementModal({ isOpen, onClose, onUploaded }) {
 
     setIsUploading(true);
     try {
-      const formData = new FormData();
-      formData.append('file', file);
+      await uploadVideo(file);
       
-      const res = await fetch(`${getApiBase()}/videos/upload?api_key=${encodeURIComponent(getApiKey() || "")}`, {
-        method: 'POST',
-        body: formData
-      });
-      
-      if (!res.ok) throw new Error('Upload failed');
-      
-      alert('Video uploaded successfully!');
+      toast.success('Video uploaded successfully!');
       if (onUploaded) onUploaded();
       onClose();
     } catch (err) {
-      alert(`Upload failed: ${err.message}`);
+      toast.error(`Upload failed: ${err.message}`);
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = null;
@@ -37,7 +30,7 @@ export default function VideoManagementModal({ isOpen, onClose, onUploaded }) {
   };
 
   return createPortal(
-    <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200" onMouseDown={(e) => { if(e.target === e.currentTarget) onClose(); }}>
       <div className="bg-bg-secondary w-full max-w-md rounded-xl shadow-2xl border border-border-primary overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-border-secondary">
           <h2 className="text-lg font-bold text-text-bright">Video Management</h2>
@@ -76,3 +69,4 @@ export default function VideoManagementModal({ isOpen, onClose, onUploaded }) {
     document.body
   );
 }
+

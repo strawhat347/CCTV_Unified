@@ -305,10 +305,17 @@ class PlatePreprocessor:
         # bounding rectangle — its angle gives us the text line skew.
         all_points = np.concatenate(contours)
         rect = cv2.minAreaRect(all_points)
-        angle = rect[2]  # degrees, range [-90, 0)
+        (rect_center, (rect_w, rect_h), angle) = rect
 
-        # Normalise angle: minAreaRect returns [-90, 0), we want [-45, 45]
-        if angle < -45:
+        # Normalise angle for all OpenCV versions.
+        # Ensure the angle is for the longer edge of the rectangle.
+        if rect_w < rect_h:
+            angle += 90
+
+        # Bound to [-45, 45]
+        while angle > 45:
+            angle -= 90
+        while angle < -45:
             angle += 90
 
         # Skip if angle is too large (likely noise, not real skew)

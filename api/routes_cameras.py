@@ -8,7 +8,11 @@ import csv
 import io
 from typing import List, Optional  # noqa: UP035
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, BackgroundTasks
+from api.rbac import get_current_user, require_role
+
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from api.schemas import Camera, CameraCreate, CameraUpdate
 from db.dao_cameras import (
@@ -21,23 +25,35 @@ from db.dao_cameras import (
 )
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
+limiter = Limiter(key_func=get_remote_address)
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5MB, tune as needed
 
+def verify_stream_url(url: str):
+    import os, cv2
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000"
+    cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+    if not cap.isOpened():
+        raise HTTPException(status_code=400, detail="Failed to connect to camera stream (timed out or unreachable)")
+    ret, frame = cap.read()
+    cap.release()
+    if not ret or frame is None:
+        raise HTTPException(status_code=400, detail="Connected but failed to decode video frame")
 
 @router.get("", response_model=List[Camera])
 def list_cameras(
     status: Optional[str] = Query(default=None, description="Filter by status: active|inactive|error"),
     q: Optional[str] = Query(default=None, description="Search term for ID, name, or location"),
     limit: int = Query(default=100, ge=1, le=2000),
-    offset: int = Query(default=0, ge=0)
+    offset: int = Query(default=0, ge=0),
+    user: dict = Depends(require_role(['admin', 'operator', 'auditor']))
 ):
     """GET /cameras  — all cameras, optionally filtered by status."""
     return get_all_cameras(status=status, q=q, limit=limit, offset=offset)
 
 
 @router.get("/{camera_id}", response_model=Camera)
-def get_camera(camera_id: int):
+def get_camera(camera_id: int, user: dict = Depends(require_role(['admin', 'operator', 'auditor']))):
     """GET /cameras/{camera_id} — single camera or 404."""
     camera = get_camera_by_id(camera_id)
     if camera is None:
@@ -46,8 +62,10 @@ def get_camera(camera_id: int):
 
 
 @router.post("", response_model=dict)
-def add_camera(camera: CameraCreate):
+@limiter.limit("10/minute")
+def add_camera(request: Request, camera: CameraCreate, user: dict = Depends(require_role(['admin']))):
     """POST /cameras — add a single camera."""
+    verify_stream_url(camera.stream_url)
     cameras_data = [(
         camera.name,
         camera.location,
@@ -69,7 +87,7 @@ def add_camera(camera: CameraCreate):
     return {"status": "success", "inserted": inserted}
 
 @router.delete("")
-def delete_cameras(confirm: Optional[str] = Query(None)):
+def delete_cameras(confirm: Optional[str] = Query(None), user: dict = Depends(require_role(['admin']))):
     """
     DELETE /cameras — purge all cameras.
 
@@ -84,7 +102,7 @@ def delete_cameras(confirm: Optional[str] = Query(None)):
 
 
 @router.delete("/{camera_id}")
-def delete_single_camera(camera_id: int):
+def delete_single_camera(camera_id: int, user: dict = Depends(require_role(['admin']))):
     """DELETE /cameras/{camera_id} — delete a single camera."""
     success = dao_delete_camera(camera_id)
     if not success:
@@ -93,8 +111,11 @@ def delete_single_camera(camera_id: int):
 
 
 @router.put("/{camera_id}")
-def update_single_camera(camera_id: int, camera_update: CameraUpdate):
+def update_single_camera(camera_id: int, camera_update: CameraUpdate, user: dict = Depends(require_role(['admin']))):
     """PUT /cameras/{camera_id} — update a single camera."""
+    if camera_update.stream_url is not None:
+        verify_stream_url(camera_update.stream_url)
+        
     # mode="json" unwraps CameraStatus to its plain string .value; the DAO
     # builds a raw parameterized query and shouldn't be handed an enum member.
     update_data = camera_update.model_dump(exclude_unset=True, mode="json")
@@ -107,8 +128,33 @@ def update_single_camera(camera_id: int, camera_update: CameraUpdate):
     return {"status": "success"}
 
 
+def background_verify_bulk_streams(cameras_to_test):
+    import os, cv2
+    from db.dao_cameras import get_all_cameras, update_camera_status
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;2000000"
+    
+    all_cams = get_all_cameras(limit=10000)
+    for cam_info in cameras_to_test:
+        matching_cams = [c for c in all_cams if c['name'] == cam_info['name'] and c['stream_url'] == cam_info['stream_url']]
+        if not matching_cams:
+            continue
+            
+        cap = cv2.VideoCapture(cam_info['stream_url'], cv2.CAP_FFMPEG)
+        works = False
+        if cap.isOpened():
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                works = True
+        cap.release()
+        
+        if not works:
+            for mc in matching_cams:
+                update_camera_status(mc['camera_id'], 'error')
+
+
 @router.post("/bulk")
-async def import_cameras_bulk(file: UploadFile = File(...)):
+@limiter.limit("3/minute")
+async def import_cameras_bulk(request: Request, background_tasks: BackgroundTasks, file: UploadFile = File(...), user: dict = Depends(require_role(['admin']))):
     """POST /cameras/bulk — import cameras from CSV."""
     if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are allowed.")
@@ -170,11 +216,15 @@ async def import_cameras_bulk(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="No valid camera rows found in CSV.")
         
     inserted = bulk_insert_cameras(cameras_data)
+    
+    cameras_to_test = [{'name': c[0], 'stream_url': c[11]} for c in cameras_data]
+    background_tasks.add_task(background_verify_bulk_streams, cameras_to_test)
+    
     return {"status": "success", "inserted": inserted}
 
 
 @router.get("/{camera_id}/test", response_model=dict)
-def test_camera_connection(camera_id: int):
+def test_camera_connection(camera_id: int, user: dict = Depends(require_role(['admin', 'operator']))):
     """Probes the camera stream to verify if it is alive, measuring latency and resolution."""
     camera = get_camera_by_id(camera_id)
     if camera is None:

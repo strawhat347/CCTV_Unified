@@ -99,7 +99,15 @@ class AICopilot:
             )
             with urllib.request.urlopen(req, timeout=config.OLLAMA_TIMEOUT) as response:
                 result = json.loads(response.read().decode("utf-8"))
-                return result.get("message", {}).get("content", "Error: No content returned by LLM.")
+                response_text = result.get("message", {}).get("content", "Error: No content returned by LLM.")
+                
+                # --- 3. Python Post-Processing (PII Masking) ---
+                # Mask standard license plates (e.g., AB12CD3456 -> AB**CD****)
+                # This protects PII if the LLM decides to hallucinate or summarize sensitive plate data.
+                plate_pattern = re.compile(r'\b([A-Z]{2})\d{2}([A-Z]{2})\d{4}\b', re.IGNORECASE)
+                response_text = plate_pattern.sub(r'\1**\2****', response_text)
+                
+                return response_text
         except urllib.error.URLError as e:
             logger.error(f"Failed to connect to Ollama at {self.base_url}: {e}")
             return "Error: Could not connect to the local AI model. Ensure Ollama is running."

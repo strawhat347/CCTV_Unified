@@ -88,7 +88,7 @@ async def lifespan(app: FastAPI):
         app.state.workers = []
     if not hasattr(app.state, "ocr_workers"):
         app.state.ocr_workers = []
-    if not hasattr(app.state, "ocr_queue"):
+    if not hasattr(app.state, "fast_queue"):
         import multiprocessing
         from pipeline.multiprocessing_workers import MasterOcrProcess
         import config
@@ -99,11 +99,17 @@ async def lifespan(app: FastAPI):
             sys.path.append(os.getcwd())
             from main import run_master_ocr
             
-        app.state.ocr_queue = multiprocessing.Queue(maxsize=200)
+        app.state.manager = multiprocessing.Manager()
+        app.state.cooldown_cache = app.state.manager.dict()
+        app.state.fast_queue = multiprocessing.Queue(maxsize=200)
+        app.state.heavy_queue = multiprocessing.Queue(maxsize=200)
         
-        # Initialize OCR workers if they don't exist
-        for _ in range(config.OCR_WORKER_COUNT):
-            worker = MasterOcrProcess(run_master_ocr, app.state.ocr_queue)
+        # Initialize OCR workers
+        for _ in range(2):
+            worker = MasterOcrProcess(run_master_ocr, app.state.fast_queue, app.state.cooldown_cache, "fast")
+            app.state.ocr_workers.append(worker)
+        for _ in range(3):
+            worker = MasterOcrProcess(run_master_ocr, app.state.heavy_queue, app.state.cooldown_cache, "heavy")
             app.state.ocr_workers.append(worker)
     yield
     logger.info("API shutting down — stopping stream sources...")
@@ -207,6 +213,12 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    # Prevent browsers from caching sensitive API responses (tokens, user data)
+    if request.url.path.startswith("/auth/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
     return response
 
 
@@ -306,8 +318,18 @@ async def toggle_scan_camera(camera_id: int, request: Request, body: ScanToggleR
             camera = get_camera_by_id(camera_id)
             if not camera:
                 raise HTTPException(status_code=404, detail="Camera not found")
-            worker = CameraFeederProcess(run_edge_feeder, camera_id, camera["stream_url"], camera["name"], "real", ocr_queue)
-            workers.append(worker)
+            fast_queue = getattr(app.state, "fast_queue", None)
+            heavy_queue = getattr(app.state, "heavy_queue", None)
+            if fast_queue and heavy_queue:
+                from pipeline.multiprocessing_workers import CameraFeederProcess
+                import multiprocessing
+                try:
+                    from main import run_edge_feeder
+                    worker = CameraFeederProcess(run_edge_feeder, camera_id, camera["stream_url"], camera["name"], "real", fast_queue, heavy_queue)
+                    app.state.workers.append(worker)
+                    worker.start()
+                except ImportError:
+                    pass
             
         # Ensure OCR workers are running
         for ow in ocr_workers:
@@ -343,17 +365,20 @@ async def toggle_scan_video(video_id: int, request: Request, body: ScanToggleReq
     ocr_workers = getattr(app.state, "ocr_workers", [])
     ocr_queue = getattr(app.state, "ocr_queue", None)
     
-    worker = next((w for w in workers if getattr(w, "is_video", False) and getattr(w, "video_id", None) == video_id), None)
+    worker = next((w for w in workers if getattr(w, "camera_id", None) == -video_id and getattr(w, "is_video", False)), None)
     
     if body.scanning:
         if not worker:
             video = get_video_by_id(video_id)
             if not video:
                 raise HTTPException(status_code=404, detail="Video not found")
-            worker = CameraFeederProcess(run_edge_feeder, -video_id, video["filepath"], video["filename"], "mock", ocr_queue)
-            worker.is_video = True
-            worker.video_id = video_id
-            workers.append(worker)
+            fast_queue = getattr(app.state, "fast_queue", None)
+            heavy_queue = getattr(app.state, "heavy_queue", None)
+            if fast_queue and heavy_queue:
+                worker = CameraFeederProcess(run_edge_feeder, -video_id, video["filepath"], video["filename"], "mock", fast_queue, heavy_queue)
+                worker.is_video = True
+                worker.video_id = video_id
+                workers.append(worker)
             
         for ow in ocr_workers:
             if not ow.is_alive():

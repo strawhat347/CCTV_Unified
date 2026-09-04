@@ -55,6 +55,12 @@ DB_USER = os.getenv("DB_USER", "root")
 DB_PASS = os.getenv("DB_PASS", "")
 DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "20"))
 
+# --- Database TLS (encrypt connection to MySQL) ---
+DB_SSL = os.getenv("DB_SSL", "false").lower() in ("true", "1", "yes")
+DB_SSL_CA = os.getenv("DB_SSL_CA", "")        # Path to CA certificate (e.g. ca.pem)
+DB_SSL_CERT = os.getenv("DB_SSL_CERT", "")    # Path to client certificate (optional, for mTLS)
+DB_SSL_KEY = os.getenv("DB_SSL_KEY", "")      # Path to client private key (optional, for mTLS)
+
 # --- API Security ---
 API_KEY = os.getenv("API_KEY")
 if not API_KEY:
@@ -64,29 +70,41 @@ if not API_KEY:
         "and put it in your .env file as API_KEY=... (see .env.example)."
     )
 API_PORT = int(os.getenv("API_PORT", "8002"))
-API_HOST = os.getenv("API_HOST", "0.0.0.0")
+API_HOST = os.getenv("API_HOST", "127.0.0.1")
+
+# --- JWT Authentication ---
+JWT_SECRET = os.getenv("JWT_SECRET")
+if not JWT_SECRET:
+    raise RuntimeError(
+        "JWT_SECRET is not set. Generate one with: "
+        "python -c \"import secrets; print(secrets.token_urlsafe(64))\" "
+        "and put it in your .env file as JWT_SECRET=... (see .env.example)."
+    )
+JWT_ACCESS_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_EXPIRE_MINUTES", "15"))
+JWT_REFRESH_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_EXPIRE_DAYS", "7"))
+
+# --- Admin Seed (first-run bootstrap) ---
+ADMIN_SEED_USERNAME = os.getenv("ADMIN_SEED_USERNAME", "admin")
+ADMIN_SEED_PASSWORD = os.getenv("ADMIN_SEED_PASSWORD", "admin123")
 
 # --- Distributed Processing ---
 # Number of centralized GPU OCR workers to spawn. Each takes ~800MB VRAM.
 OCR_WORKER_COUNT = int(os.getenv("OCR_WORKER_COUNT", "5"))
 
 # --- Model paths ---
-# Prefer custom trained model if present, fallback to models/plate_yolov8n.pt or yolov8n.pt
-_default_trained_plate = BASE_DIR / "runs" / "detect" / "unified_alpr_v1-6" / "weights" / "best.pt"
-_default_model_plate = BASE_DIR / "models" / "plate_yolov8n.pt"
-
-if _default_trained_plate.exists():
-    _plate_model_default = str(_default_trained_plate)
-elif _default_model_plate.exists():
-    _plate_model_default = str(_default_model_plate)
-else:
-    _plate_model_default = str(BASE_DIR / "yolov8n.pt")
-
-YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH", _plate_model_default)
+# Read directly from the .env file.
+# If not specified in .env, fallback to the base yolov8n.pt
+YOLO_MODEL_PATH = os.getenv(
+    "YOLO_MODEL_PATH", 
+    str(BASE_DIR / "models" / "plate_yolov8n.pt")
+)
+if not Path(YOLO_MODEL_PATH).exists():
+    YOLO_MODEL_PATH = str(BASE_DIR / "yolov8n.pt")
 
 
 
 # --- Tiled inference (SAHI-style) ---
+USE_TILED = os.getenv("USE_TILED", "false").lower() in ("true", "1", "yes")
 TILE_SIZE = int(os.getenv("TILE_SIZE", "1280"))
 TILE_OVERLAP = float(os.getenv("TILE_OVERLAP", "0.2"))
 TILE_IOU_THRESHOLD = float(os.getenv("TILE_IOU_THRESHOLD", "0.5"))
@@ -171,4 +189,18 @@ def sanitize_url(url: str) -> str:
     if not url or not isinstance(url, str):
         return url
     return re.sub(r'://([^:@/]+):([^@/]+)@', r'://\1:***@', url)
+
+
+# Loud warning if running in production with the default seed password
+if not is_mock_mode() and ADMIN_SEED_PASSWORD == "admin123":
+    import warnings
+    warnings.warn(
+        "\n\n"
+        "==============================================================\n"
+        "  SECURITY WARNING: Default admin password 'admin123' is    \n"
+        "  still in use in PRODUCTION mode. Set ADMIN_SEED_PASSWORD  \n"
+        "  in your .env file to a strong, unique value immediately.  \n"
+        "==============================================================",
+        stacklevel=2,
+    )
 

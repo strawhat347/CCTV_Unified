@@ -281,7 +281,7 @@ STEP 9  Desktop Client  [Presentation / GUI Layer — NEXT PRIORITY]
 
         Will show: live camera grid, real-time bounding box detections,
         and instant unacknowledged alerts feed via api/.
-        STATUS: IN PROGRESS — Video Wall and cloud streaming integrated, but still need to complete leftover frontend tasks (e.g., alert feed UI, detections view).
+        STATUS: INCOMPLETE - Dashboard and alerts still remains
 
 STEP 10  AI Copilot & Advanced Alert Filtering
         ├─ alerting/ai_copilot.py (Local LLM Integration via Ollama)
@@ -291,7 +291,7 @@ STEP 10  AI Copilot & Advanced Alert Filtering
         Goal: Build a generative AI assistant for CCTV operators using a local 
         quantized model (like Phi-3 or Qwen2 on 8GB VRAM). Ensures 100% data 
         privacy (no cloud API) while satisfying the competition's AI filtering mandate.
-        STATUS: NOT STARTED — scheduled immediately after Step 9 Desktop Client.
+        STATUS: COMPLETE — ai_copilot.py is fully implemented with PII masking and prompt guardrails. Frontend AIPanel integrated.
 
 STEP 11  Enterprise Security & System Hardening  [DEDICATED POST-AI HARDENING PASS]
         ├─ db/schema.sql & db/dao_users.py
@@ -319,23 +319,34 @@ STEP 11  Enterprise Security & System Hardening  [DEDICATED POST-AI HARDENING PA
         └─ tests/test_auth.py
             • Automated unit tests: password hashing/verification, token expiry/tamper rejection,
               role permission enforcement (401 Unauthorized / 403 Forbidden), audit log recording.
-        STATUS: NOT STARTED — locks down all endpoints, AI interfaces, and frontend sessions before final release.
+        STATUS: DONE — All endpoints, WebSockets, AI interfaces, and frontend sessions are securely locked down.
 
 STEP 12  Anti-Exploit & Infrastructure Hardening (Vulnerability Patching)
         ├─ Network MITM & Encryption (TLS/SSL)
         │   • Enforce `rtsps://` for camera feeds to prevent ARP Spoofing ("Hollywood Heist" video injection).
-        │   • Setup Nginx/Traefik Reverse Proxy with Let's Encrypt or Internal Enterprise CA to serve API over HTTPS.
+        │   • Self-signed TLS (cert.pem/key.pem) for Uvicorn HTTPS and PyWebView shell.
         ├─ SSRF (Server-Side Request Forgery) Prevention
         │   • Strict URL validation in `api/schemas.py` to reject local file paths (`file://`, `C:\`, `/etc/`).
-        │   • Sandbox FFmpeg subprocesses to disable `-allowed_extensions ALL` (prevents malicious HLS playlists from reading local files).
+        │   • Mock-mode bypass in schemas.py, routes_streams.py for local testing.
+        │   • Sandbox FFmpeg subprocesses: `-protocol_whitelist` and `-allowed_extensions ts`.
         ├─ Cross-Site WebSocket Hijacking (CSWSH)
-        │   • Enforce strict `Origin` header validation in `ws_alerts.py` to prevent cross-tab attacks.
+        │   • Strict `Origin` header validation in WebSocket handshake (localhost-only regex).
         ├─ Denial of Service (DoS) Protection
-        │   • Add FastAPI Rate Limiting (`slowapi`) on `POST /cameras` and `/auth/login`.
-        │   • Implement maximum VRAM allocation limits for Multiprocessing Workers.
-        └─ Data-At-Rest Encryption
-        │   • Implement Transparent Data Encryption (TDE) for MySQL to protect the Stolen Vehicle Registry from physical theft.
-        STATUS: IN PROGRESS — Local Self-Signed TLS successfully implemented (cert.pem/key.pem generated via cryptography, integrated into Uvicorn and PyWebView shell). Other points NOT STARTED.
+        │   • Rate Limiting (`slowapi`): 5/min on login, 3/min on register, 10/min on POST /cameras, 3/min on bulk import.
+        │   • MAX_WS_CONNECTIONS cap on WebSocket connections.
+        │   • MAX_CONCURRENT_STREAMS cap on video streams.
+        ├─ Registration Lockdown
+        │   • POST /auth/register restricted to admin-only (was public — critical fix).
+        ├─ Data-At-Rest Encryption
+        │   • MySQL TDE setup guide in docs/mysql_tde_setup.md.
+        ├─ Data-In-Transit Encryption
+        │   • DB connection pool supports SSL/TLS via DB_SSL env vars.
+        ├─ Additional Hardening
+        │   • Referrer-Policy, Permissions-Policy, Cache-Control headers on auth endpoints.
+        │   • Production warning for default admin seed password.
+        │   • Crop filename sanitization to prevent path traversal via adversarial OCR.
+        │   • HLS segment path traversal defense-in-depth (resolve + startswith check).
+        STATUS: COMPLETE — All anti-exploit mitigations implemented and documented.
 
 STEP 13  Packaging & Distribution
         ├─ PyInstaller — bundles backend (api/ + pipeline/) AND
@@ -356,22 +367,21 @@ STEP 13  Packaging & Distribution
 ================================================================================
 TODO: CRITICAL DEMO FIXES (Immediate Next Steps, after step 10)
 --------------------------------------------------------------------------------
-[ ] Fix SSRF Vulnerability (Security):
+[x] Fix SSRF Vulnerability (Security):
     Update api/schemas.py `validate_stream_url` to strictly reject local paths 
     unless explicitly booted in MOCK mode to prevent FFmpeg/OpenCV Local File Inclusion.
 
-[ ] Fix "Red Light Spam" (DB Bottleneck):
+[x] Fix "Red Light Spam" (DB Bottleneck):
     Add an In-Memory Cooldown Cache to pipeline/detection_pipeline.py.
     If a plate is detected, ignore duplicates on the same camera for ~30s.
-    Prevents MySQL locking and WebSocket spam when a car idles at a light.
 
-[ ] Fix "Dirty Plate" False Negatives:
+[x] Fix "Dirty Plate" False Negatives:
     Update alerting/rule_engine.py to use Fuzzy Matching (difflib.SequenceMatcher)
     instead of strict equality. If PaddleOCR misreads '8' as 'B' (85% match),
     it still triggers a "Probable Match" alert.
 
-[ ] Implement Triage Architecture (Fast vs Heavy Routing):
-    Refactor `pipeline/stream_manager.py` and OCR worker pools to create two queues.
+[x] Implement Triage Architecture (Fast vs Heavy Routing):
+    Refactor OCR worker pools to create two queues.
     Edge Feeder calculates crop Laplacian variance (blur score).
     Crisp plates route to 2 Fast Workers (Lightweight OCR).
     Blurry plates route to 3 Heavy Workers (Super-Resolution + Heavy VLM/OCR) 

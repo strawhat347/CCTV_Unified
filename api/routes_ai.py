@@ -1,7 +1,8 @@
 """
 api/routes_ai.py - AI Copilot Endpoints (Step 10)
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from api.rbac import get_current_user, require_role
 from pydantic import BaseModel, Field
 from typing import Optional
 import logging
@@ -27,7 +28,7 @@ class AIStatusResponse(BaseModel):
     status: str
 
 @router.get("/status", response_model=AIStatusResponse)
-def check_ai_status():
+def check_ai_status(user: dict = Depends(require_role(['admin', 'operator']))):
     """
     Check if the Ollama AI service is running on the host machine.
     """
@@ -35,7 +36,7 @@ def check_ai_status():
     return AIStatusResponse(status="online" if is_online else "offline")
 
 @router.post("/query", response_model=AIQueryResponse)
-def query_ai_copilot(req: AIQueryRequest):
+def query_ai_copilot(req: AIQueryRequest, user: dict = Depends(require_role(['admin', 'operator']))):
     """
     Query the local AI Copilot using natural language.
     Retrieves the most recent alerts and detections and passes them to the LLM.

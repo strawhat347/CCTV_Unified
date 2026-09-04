@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from typing import List
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from api.rbac import get_current_user, require_role
 
 from db.dao_detections import (
     get_detection_by_id,
@@ -70,7 +71,7 @@ def _filter_duplicate_standard_plates(raw_detections: List[dict]) -> List[dict]:
 
 
 @router.get("", response_model=List[Detection])
-def list_recent_detections(limit: int = Query(default=100, ge=1, le=500)):
+def list_recent_detections(limit: int = Query(default=100, ge=1, le=500), user: dict = Depends(require_role(['admin', 'operator', 'auditor']))):
     """GET /detections — most recent detections across all cameras."""
     raw_detections = get_recent_detections(limit=limit * 3)
     filtered = _filter_duplicate_standard_plates(raw_detections)
@@ -78,7 +79,7 @@ def list_recent_detections(limit: int = Query(default=100, ge=1, le=500)):
 
 
 @router.get("/{detection_id}", response_model=Detection)
-def get_detection(detection_id: int):
+def get_detection(detection_id: int, user: dict = Depends(require_role(['admin', 'operator', 'auditor']))):
     """GET /detections/{detection_id} — single detection or 404."""
     detection = get_detection_by_id(detection_id)
     if detection is None:
@@ -87,7 +88,7 @@ def get_detection(detection_id: int):
 
 
 @router.get("/by-camera/{camera_id}", response_model=List[Detection])
-def list_detections_by_camera(camera_id: int, limit: int = Query(default=100, ge=1, le=500)):
+def list_detections_by_camera(camera_id: int, limit: int = Query(default=100, ge=1, le=500), user: dict = Depends(require_role(['admin', 'operator', 'auditor']))):
     """GET /detections/by-camera/{camera_id} — most recent detections for one camera."""
     raw_detections = get_detections_by_camera(camera_id=camera_id, limit=limit * 3)
     filtered = _filter_duplicate_standard_plates(raw_detections)
@@ -96,7 +97,7 @@ def list_detections_by_camera(camera_id: int, limit: int = Query(default=100, ge
 
 
 @router.delete("")
-def delete_all_logs(confirm: str = Query(default="")):
+def delete_all_logs(confirm: str = Query(default=""), user: dict = Depends(require_role(['admin']))):
     """DELETE /detections - Clear all detection and alert logs. Requires confirm=DELETE_ALL_LOGS."""
     if confirm != "DELETE_ALL_LOGS":
         raise HTTPException(status_code=400, detail="Pass ?confirm=DELETE_ALL_LOGS to confirm this destructive action.")

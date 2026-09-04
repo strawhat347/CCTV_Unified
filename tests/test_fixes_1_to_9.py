@@ -46,23 +46,26 @@ client = TestClient(app)
 
 @patch("api.routes_cameras.get_all_cameras", return_value=[])
 def test_api_auth_and_cors(mock_get_all):
-    # Normal request without API key should 401
+    from api.auth import create_access_token
+    test_token = create_access_token({"sub": "admin", "role": "admin", "uid": 1})
+    
+    # Normal request without token should 401
     resp = client.get("/cameras")
     assert resp.status_code == 401
     
-    # Normal request with API key
-    resp = client.get("/cameras", headers={"X-API-Key": config.API_KEY})
+    # Normal request with JWT token
+    resp = client.get("/cameras", headers={"Authorization": f"Bearer {test_token}"})
     assert resp.status_code == 200
 
-    # WebSocket without API key should be rejected
+    # WebSocket without token should be rejected
     from starlette.websockets import WebSocketDisconnect
     with pytest.raises(WebSocketDisconnect) as exc:
         with client.websocket_connect("/alerts/ws"):
             pass
     assert exc.value.code == 1008
     
-    # WebSocket with API key
-    with client.websocket_connect(f"/alerts/ws?api_key={config.API_KEY}") as ws:
+    # WebSocket with JWT token
+    with client.websocket_connect(f"/alerts/ws?token={test_token}") as ws:
         # Should connect successfully
         pass
 

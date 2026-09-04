@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Save, Loader2, Camera as CameraIcon, MapPin } from 'lucide-react';
+import { toast } from './Toast';
 import { MapContainer, TileLayer, useMapEvents, Marker } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -37,24 +38,24 @@ export default function EditCameraModal({ isOpen, onClose, onSave, camera, isLoa
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!editData.name || !editData.stream_url || !editData.city || !editData.district || !editData.location || !editData.department || !editData.department_id || editData.latitude == null || editData.longitude == null) {
-      alert("Name, Stream URL, City, District, Location, Department Name, Department ID, Latitude, and Longitude are required.");
+      toast.warning("Name, Stream URL, City, District, Location, Department Name, Department ID, Latitude, and Longitude are required.");
       return;
     }
     const ALLOWED_PROTOCOLS = ['rtsp://', 'rtsps://', 'http://', 'https://'];
     const streamUrl = (editData.stream_url || '').trim();
     if (!ALLOWED_PROTOCOLS.some(proto => streamUrl.startsWith(proto))) {
-      alert("Stream URL must start with rtsp://, rtsps://, http://, or https://");
+      toast.warning("Stream URL must start with rtsp://, rtsps://, http://, or https://");
       return;
     }
     onSave(camera.camera_id, editData);
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm" onMouseDown={(e) => { if(e.target === e.currentTarget) onClose(); }}>
       
       {/* Map Picker Modal */}
       {isMapOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50" onClick={() => setIsMapOpen(false)}>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50" onMouseDown={(e) => { if(e.target === e.currentTarget) setIsMapOpen(false); }}>
           <div className="bg-bg-secondary w-full max-w-2xl rounded-xl shadow-2xl flex flex-col h-[70vh] border border-border-secondary overflow-hidden" onClick={e => e.stopPropagation()}>
             <div className="p-4 border-b border-border-secondary flex justify-between items-center bg-bg-elevated">
               <h3 className="font-semibold text-text-bright flex items-center gap-2"><MapPin className="w-4 h-4 text-accent" /> Pick Location</h3>

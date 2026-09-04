@@ -6,6 +6,8 @@ import VideoCell from '../components/VideoCell';
 import CameraListCard from '../components/CameraListCard';
 import CameraManagementModal from '../components/CameraManagementModal';
 import EditCameraModal from '../components/EditCameraModal';
+import { toast } from '../components/Toast';
+import { confirmModal } from '../components/ConfirmModal';
 
 const STORAGE_KEY_ACTIVE = 'videowall_activeCameras';
 const STORAGE_KEY_SEARCH = 'videowall_searchQuery';
@@ -16,7 +18,9 @@ export default function VideoWall() {
   const [activeCameras, setActiveCameras] = useState(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_ACTIVE);
-      return saved ? JSON.parse(saved) : [];
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
     }
@@ -102,8 +106,8 @@ export default function VideoWall() {
   const loadMore = () => setOffset(prev => prev + 50);
   
   useEffect(() => {
-    if (offset > 0 && loadDataRef.current) loadDataRef.current(false, searchQueryRef.current || '');
-  }, [offset]);
+    if (offset > 0 && loadDataRef.current) loadDataRef.current(false, searchQuery);
+  }, [offset, searchQuery]);
 
   useEffect(() => { 
     localStorage.setItem(STORAGE_KEY_ACTIVE, JSON.stringify(activeCameras)); 
@@ -118,35 +122,47 @@ export default function VideoWall() {
     if (!file) return;
     try {
       setLoading(true); await importCamerasCsv(file); await loadData(true);
-      setManageModalOpen(false); alert('Cameras imported successfully!');
-    } catch (err) { alert(`Import failed: ${err.message}`); } 
+      setManageModalOpen(false); toast.success('Cameras imported successfully!');
+    } catch (err) { toast.error(`Import failed: ${err.message}`); } 
     finally { setLoading(false); e.target.value = null; }
   };
 
   const handleClearAll = async () => {
-    if (!confirm('Are you sure you want to delete all cameras?')) return;
+    const ok = await confirmModal({
+      title: 'Delete All Cameras',
+      message: 'Are you sure you want to delete all cameras? This will remove all feeds and associated detections.',
+      confirmText: 'Delete All',
+      isDanger: true,
+    });
+    if (!ok) return;
     try {
       setLoading(true); await deleteAllCameras(); setActiveCameras([]); await loadData(true);
-      setManageModalOpen(false); alert('All cameras deleted!');
-    } catch (err) { alert(`Clear failed: ${err.message}`); } 
+      setManageModalOpen(false); toast.success('All cameras deleted!');
+    } catch (err) { toast.error(`Clear failed: ${err.message}`); } 
     finally { setLoading(false); }
   };
 
   const handleAddCamera = async (cameraData) => {
     try {
       setLoading(true); await addCamera(cameraData); await loadData(true);
-      setManageModalOpen(false); alert('Camera added successfully!');
-    } catch (err) { alert(`Failed to add camera: ${err.message}`); } 
+      setManageModalOpen(false); toast.success('Camera added successfully!');
+    } catch (err) { toast.error(`Failed to add camera: ${err.message}`); } 
     finally { setLoading(false); }
   };
 
   const handleSingleDelete = async (camera) => {
-    if (!confirm(`Are you sure you want to delete Camera #${camera.camera_id}?`)) return;
+    const ok = await confirmModal({
+      title: 'Delete Camera',
+      message: `Are you sure you want to delete Camera #${camera.camera_id} (${camera.name})?`,
+      confirmText: 'Delete',
+      isDanger: true,
+    });
+    if (!ok) return;
     try {
       setLoading(true); await deleteSingleCamera(camera.camera_id);
       setActiveCameras(prev => prev.filter(c => c.camera_id !== camera.camera_id));
-      await loadData(true); alert('Camera deleted successfully!');
-    } catch (err) { alert(`Delete failed: ${err.message}`); } 
+      await loadData(true); toast.success('Camera deleted successfully!');
+    } catch (err) { toast.error(`Delete failed: ${err.message}`); } 
     finally { setLoading(false); }
   };
 
@@ -154,8 +170,8 @@ export default function VideoWall() {
     try {
       setLoading(true); await updateCamera(cameraId, updatedData);
       setActiveCameras(prev => prev.map(c => c.camera_id === cameraId ? { ...c, ...updatedData } : c));
-      await loadData(true); setEditingCamera(null); alert('Camera updated successfully!');
-    } catch (err) { alert(`Update failed: ${err.message}`); } 
+      await loadData(true); setEditingCamera(null); toast.success('Camera updated successfully!');
+    } catch (err) { toast.error(`Update failed: ${err.message}`); } 
     finally { setLoading(false); }
   };
 
@@ -164,7 +180,7 @@ export default function VideoWall() {
       const exists = prev.find(c => c.camera_id === camera.camera_id);
       if (exists) return prev.filter(c => c.camera_id !== camera.camera_id);
       if (camera.status !== 'active') {
-        alert('Cannot add an offline or error camera to the video wall.');
+        toast.warning('Cannot add an offline or error camera to the video wall.');
         return prev;
       }
       return [...prev, camera];

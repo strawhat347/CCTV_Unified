@@ -22,6 +22,26 @@ _dbconfig = {
     "password": config.DB_PASS,
 }
 
+# --- Database TLS (encrypt connection to MySQL) ---
+# When DB_SSL=true, all connections in the pool use TLS, preventing
+# network sniffing of queries containing license plates and credentials.
+if config.DB_SSL:
+    import ssl as _ssl
+    _ssl_context = _ssl.create_default_context()
+    if config.DB_SSL_CA:
+        _ssl_context.load_verify_locations(config.DB_SSL_CA)
+    else:
+        # If no CA specified, still encrypt but don't verify server cert
+        # (acceptable for dev / same-host MySQL, not for production over WAN)
+        _ssl_context.check_hostname = False
+        _ssl_context.verify_mode = _ssl.CERT_NONE
+    if config.DB_SSL_CERT and config.DB_SSL_KEY:
+        _ssl_context.load_cert_chain(config.DB_SSL_CERT, config.DB_SSL_KEY)
+    _dbconfig["ssl_disabled"] = False
+    _dbconfig["ssl_ca"] = config.DB_SSL_CA or None
+    _dbconfig["ssl_cert"] = config.DB_SSL_CERT or None
+    _dbconfig["ssl_key"] = config.DB_SSL_KEY or None
+
 _pool = None
 _pool_lock = threading.Lock()
 

@@ -13,7 +13,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class CameraStatus(str, Enum):
@@ -62,10 +62,23 @@ class CameraCreate(BaseModel):
     @field_validator("stream_url")
     @classmethod
     def validate_stream_url(cls, v: str) -> str:
+        import config
+        if config.is_mock_mode():
+            return v
+            
         ALLOWED_PROTOCOLS = ("rtsp://", "rtsps://", "http://", "https://")
         if not any(v.startswith(proto) for proto in ALLOWED_PROTOCOLS):
             raise ValueError('stream_url must start with rtsp://, rtsps://, http://, or https://. Local files and other protocols are not allowed.')
         return v
+        
+    @model_validator(mode="after")
+    def validate_gujarat_bounds(self) -> 'CameraCreate':
+        lat, lon = self.latitude, self.longitude
+        if lat is not None and not (20.1 <= lat <= 24.7):
+            raise ValueError(f"Latitude {lat} is outside Gujarat bounds (20.1 to 24.7). Please provide a valid location.")
+        if lon is not None and not (68.1 <= lon <= 74.5):
+            raise ValueError(f"Longitude {lon} is outside Gujarat bounds (68.1 to 74.5). Please provide a valid location.")
+        return self
 
 
 class CameraUpdate(BaseModel):
@@ -89,10 +102,24 @@ class CameraUpdate(BaseModel):
         if v is None:
             return v
             
+        import config
+        if config.is_mock_mode():
+            return v
+            
+        v = v.strip()
         ALLOWED_PROTOCOLS = ("rtsp://", "rtsps://", "http://", "https://")
         if not any(v.startswith(proto) for proto in ALLOWED_PROTOCOLS):
             raise ValueError('stream_url must start with rtsp://, rtsps://, http://, or https://. Local files and other protocols are not allowed.')
         return v
+        
+    @model_validator(mode="after")
+    def validate_gujarat_bounds(self) -> 'CameraUpdate':
+        lat, lon = self.latitude, self.longitude
+        if lat is not None and not (20.1 <= lat <= 24.7):
+            raise ValueError(f"Latitude {lat} is outside Gujarat bounds (20.1 to 24.7). Please provide a valid location.")
+        if lon is not None and not (68.1 <= lon <= 74.5):
+            raise ValueError(f"Longitude {lon} is outside Gujarat bounds (68.1 to 74.5). Please provide a valid location.")
+        return self
 
 
 class Detection(BaseModel):
@@ -156,3 +183,22 @@ class InternalDetectionPush(BaseModel):
     ocr_confidence: Optional[float] = None
     image_path: Optional[str] = None
     detected_at: Optional[datetime] = None
+
+
+# ── Auth Models ───────────────────────────────────────────
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: Optional[str] = None
+    token_type: str = "bearer"
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    username: str
+    role: str
+    is_active: bool
+    last_login: Optional[datetime] = None
+    created_at: datetime

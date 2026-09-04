@@ -9,9 +9,11 @@ logger = logging.getLogger("workers")
 import threading
 
 class MasterOcrProcess:
-    def __init__(self, run_func: Callable[[Queue], None], ocr_queue: Queue):
+    def __init__(self, run_func: Callable, ocr_queue: Queue, cooldown_cache: Any = None, worker_type: str = "both"):
         self.run_func = run_func
         self.ocr_queue = ocr_queue
+        self.cooldown_cache = cooldown_cache
+        self.worker_type = worker_type
         self._process: multiprocessing.Process | None = None
         self._stop_event = multiprocessing.Event()
         self._lock = threading.Lock()
@@ -25,11 +27,11 @@ class MasterOcrProcess:
             self._stop_event.clear()
             self._process = multiprocessing.Process(
                 target=self._run_wrapper,
-                args=(self.run_func, self.ocr_queue, self._stop_event),
+                args=(self.run_func, self.ocr_queue, self.cooldown_cache, self.worker_type, self._stop_event),
                 daemon=True
             )
             self._process.start()
-            logger.info(f"Master OCR Process started (PID: {self._process.pid})")
+            logger.info(f"Master OCR Process ({self.worker_type}) started (PID: {self._process.pid})")
 
     def stop(self):
         with self._lock:
@@ -46,22 +48,23 @@ class MasterOcrProcess:
             return self._process is not None and self._process.is_alive()
 
     @staticmethod
-    def _run_wrapper(run_func: Callable, queue: Queue, stop_event: multiprocessing.synchronize.Event):
+    def _run_wrapper(run_func: Callable, queue: Queue, cooldown_cache: Any, worker_type: str, stop_event: multiprocessing.synchronize.Event):
         try:
-            run_func(queue, stop_event)
+            run_func(queue, cooldown_cache, worker_type, stop_event)
         except KeyboardInterrupt:
             pass
         except Exception as e:
             logger.exception(f"Fatal error in Master OCR worker: {e}")
 
 class CameraFeederProcess:
-    def __init__(self, run_func: Callable, camera_id: int, source_url: str, camera_name: str, mode: str, ocr_queue: Queue):
+    def __init__(self, run_func: Callable, camera_id: int, source_url: str, camera_name: str, mode: str, fast_queue: Queue, heavy_queue: Queue):
         self.run_func = run_func
         self.camera_id = camera_id
         self.source_url = source_url
         self.camera_name = camera_name
         self.mode = mode
-        self.ocr_queue = ocr_queue
+        self.fast_queue = fast_queue
+        self.heavy_queue = heavy_queue
         self._process: multiprocessing.Process | None = None
         self._stop_event = multiprocessing.Event()
         self._lock = threading.Lock()
@@ -74,7 +77,7 @@ class CameraFeederProcess:
             self._stop_event.clear()
             self._process = multiprocessing.Process(
                 target=self._run_wrapper,
-                args=(self.run_func, self.camera_id, self.source_url, self.camera_name, self.mode, self.ocr_queue, self._stop_event),
+                args=(self.run_func, self.camera_id, self.source_url, self.camera_name, self.mode, self.fast_queue, self.heavy_queue, self._stop_event),
                 daemon=True
             )
             self._process.start()
@@ -102,9 +105,9 @@ class CameraFeederProcess:
                     self._process.exitcode not in (None, 0))
 
     @staticmethod
-    def _run_wrapper(run_func, camera_id, source_url, camera_name, mode, ocr_queue, stop_event):
+    def _run_wrapper(run_func, camera_id, source_url, camera_name, mode, fast_queue, heavy_queue, stop_event):
         try:
-            run_func(camera_id, source_url, camera_name, mode, ocr_queue, stop_event)
+            run_func(camera_id, source_url, camera_name, mode, fast_queue, heavy_queue, stop_event)
         except KeyboardInterrupt:
             pass
         except Exception as e:

@@ -41,19 +41,33 @@ export default function Navbar({ alertCount = 0, onToggleAlertPanel, onToggleAIP
     };
   }, [scanMenuOpen]);
   
-  const syncWallCameras = () => {
-    try {
-      const saved = localStorage.getItem('videowall_activeCameras');
-      setWallCameras(saved ? JSON.parse(saved) : []);
-    } catch (e) { console.error(e); }
-  };
+  useEffect(() => {
+    const updateCounts = () => {
+      try {
+        const saved = localStorage.getItem('videowall_activeCameras');
+        const parsed = saved ? JSON.parse(saved) : [];
+        setWallCameras(Array.isArray(parsed) ? parsed : []);
+      } catch (e) {
+        setWallCameras([]);
+      }
+      
+      try {
+        const saved = localStorage.getItem('videowall_activeVideos');
+        const parsed = saved ? JSON.parse(saved) : [];
+        setWallVideos(Array.isArray(parsed) ? parsed : []);
+      } catch (e) {
+        setWallVideos([]);
+      }
+    };
 
-  const syncWallVideos = () => {
-    try {
-      const saved = localStorage.getItem('videowall_activeVideos');
-      setWallVideos(saved ? JSON.parse(saved) : []);
-    } catch (e) { console.error(e); }
-  };
+    updateCounts();
+    window.addEventListener('videowall_cameras_changed', updateCounts);
+    window.addEventListener('videowall_videos_changed', updateCounts);
+    return () => {
+      window.removeEventListener('videowall_cameras_changed', updateCounts);
+      window.removeEventListener('videowall_videos_changed', updateCounts);
+    };
+  }, []);
 
   const refreshSystemStatus = useCallback(() => {
     fetchSystemStatus()
@@ -66,20 +80,6 @@ export default function Navbar({ alertCount = 0, onToggleAlertPanel, onToggleAIP
   }, []);
 
   useEffect(() => {
-    syncWallCameras();
-    window.addEventListener('videowall_cameras_changed', syncWallCameras);
-    return () => window.removeEventListener('videowall_cameras_changed', syncWallCameras);
-  }, []);
-
-  useEffect(() => {
-    syncWallVideos();
-    window.addEventListener('videowall_videos_changed', syncWallVideos);
-    return () => window.removeEventListener('videowall_videos_changed', syncWallVideos);
-  }, []);
-
-  useEffect(() => {
-    syncWallCameras();
-    syncWallVideos();
     refreshSystemStatus();
     window.addEventListener('ai_status_changed', refreshSystemStatus);
     const interval = setInterval(refreshSystemStatus, 3000);

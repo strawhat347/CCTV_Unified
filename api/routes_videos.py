@@ -1,4 +1,5 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from api.rbac import get_current_user, require_role
 from fastapi.responses import FileResponse
 import mimetypes
 import os
@@ -14,7 +15,7 @@ os.makedirs(VIDEOS_DIR, exist_ok=True)
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024  # 500 MB
 
 @router.post("/upload")
-async def upload_video(file: UploadFile = File(...)):
+async def upload_video(file: UploadFile = File(...), user: dict = Depends(require_role(['admin', 'operator']))):
     if not file.filename or not file.filename.endswith(('.mp4', '.webm')):
         raise HTTPException(status_code=400, detail="Only MP4 or WebM files are allowed.")
     
@@ -33,16 +34,29 @@ async def upload_video(file: UploadFile = File(...)):
                 os.remove(filepath)
                 raise HTTPException(status_code=413, detail=f"File too large. Maximum size is {MAX_UPLOAD_BYTES // (1024*1024)} MB.")
             buffer.write(chunk)
+            
+    # Verify the uploaded video is actually decodable
+    import cv2
+    cap = cv2.VideoCapture(filepath)
+    if not cap.isOpened():
+        cap.release()
+        os.remove(filepath)
+        raise HTTPException(status_code=400, detail="Invalid video file: Cannot open file.")
+    ret, frame = cap.read()
+    cap.release()
+    if not ret or frame is None:
+        os.remove(filepath)
+        raise HTTPException(status_code=400, detail="Invalid video file: Cannot decode video frames. Ensure it is a valid MP4 or WebM.")
         
     video_id = insert_video(file.filename, filepath)
     return {"id": video_id, "filename": file.filename, "status": "uploaded"}
 
 @router.get("/list")
-def list_videos():
+def list_videos(user: dict = Depends(require_role(['admin', 'operator', 'auditor']))):
     return get_all_videos()
 
 @router.get("/play/{video_id}")
-def play_video(video_id: int):
+def play_video(video_id: int, user: dict = Depends(require_role(['admin', 'operator', 'auditor']))):
     video = get_video_by_id(video_id)
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
@@ -59,7 +73,7 @@ from fastapi import Request
 import asyncio
 
 @router.delete("/delete/{video_id}")
-async def delete_video_route(video_id: int, request: Request):
+async def delete_video_route(video_id: int, request: Request, user: dict = Depends(require_role(['admin']))):
     video = get_video_by_id(video_id)
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")

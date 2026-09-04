@@ -20,14 +20,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger("main")
 
-def run_master_ocr(queue: multiprocessing.Queue, stop_event: multiprocessing.synchronize.Event):
+def run_master_ocr(queue: multiprocessing.Queue, cooldown_cache: dict, worker_type: str, stop_event: multiprocessing.synchronize.Event):
     from pipeline.detection_pipeline import CentralOcrWorker
     from detection.paddle_ocr_engine import PaddleOcrEngine
     from alerting.rule_engine import RuleEngine
     from registry.mock_registry import MockRegistry
     from registry.real_registry_api import RealRegistryAPI
 
-    logger.info("Initializing PaddleOCR (GPU/CPU) in Master process...")
+    logger.info(f"Initializing PaddleOCR (GPU/CPU) in Master process ({worker_type})...")
     ocr = PaddleOcrEngine()
     ocr.load_model()
     
@@ -41,7 +41,7 @@ def run_master_ocr(queue: multiprocessing.Queue, stop_event: multiprocessing.syn
     registry.connect()
     rule_engine = RuleEngine(registry)
     
-    worker = CentralOcrWorker(ocr, rule_engine, queue)
+    worker = CentralOcrWorker(ocr, rule_engine, queue, cooldown_cache, worker_type)
     
     # We use stop_event in a non-blocking loop via queue timeout
     try:
@@ -55,12 +55,12 @@ def run_master_ocr(queue: multiprocessing.Queue, stop_event: multiprocessing.syn
             except Empty:
                 continue
             except Exception as e:
-                logger.error(f"Central OCR error: {e}")
+                logger.error(f"Central OCR error ({worker_type}): {e}")
     finally:
         if hasattr(registry, 'close'):
             registry.close()
 
-def run_edge_feeder(camera_id: int, source_url: str, camera_name: str, mode: str, queue: multiprocessing.Queue, stop_event: multiprocessing.synchronize.Event):
+def run_edge_feeder(camera_id: int, source_url: str, camera_name: str, mode: str, fast_queue: multiprocessing.Queue, heavy_queue: multiprocessing.Queue, stop_event: multiprocessing.synchronize.Event):
     import os
     # CRITICAL: Force TCP for all OpenCV operations in this process BEFORE cv2 is imported by any sub-module
     os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000"
@@ -77,7 +77,15 @@ def run_edge_feeder(camera_id: int, source_url: str, camera_name: str, mode: str
     else:
         source = RTSPCameraSource(camera_id, source_url)
 
-    if config.USE_HIERARCHICAL:
+    if getattr(config, "USE_TILED", False):
+        from detection.tiled_plate_detector import TiledPlateDetector
+        detector = TiledPlateDetector(
+            tile_size=config.TILE_SIZE,
+            overlap_ratio=config.TILE_OVERLAP,
+            iou_threshold=config.TILE_IOU_THRESHOLD,
+        )
+        detector.load_model(config.YOLO_MODEL_PATH)
+    elif config.USE_HIERARCHICAL:
         from detection.hierarchical_detector import HierarchicalDetector
         detector = HierarchicalDetector(
             vehicle_model_path=config.VEHICLE_MODEL_PATH,
@@ -90,7 +98,7 @@ def run_edge_feeder(camera_id: int, source_url: str, camera_name: str, mode: str
         detector = YoloPlateDetector()
         detector.load_model(config.YOLO_MODEL_PATH)
 
-    feeder = CameraEdgeFeeder(camera_id, source, detector, queue)
+    feeder = CameraEdgeFeeder(camera_id, source, detector, fast_queue, heavy_queue)
     feeder.ensure_camera_row(camera_name, source_url)
     
     logger.info(f"Edge Feeder {camera_id} starting loop.")
@@ -160,15 +168,20 @@ def main():
     multiprocessing.set_start_method('spawn')
     logger.info(f"CCTV Unified MVP (Distributed Queue Mode) starting in '{config.MODE}' mode...")
     
-    # 1. Create the Shared OCR Queue
-    ocr_queue = multiprocessing.Queue(maxsize=200)
+    # 1. Create the Shared OCR Queues and Cache
+    manager = multiprocessing.Manager()
+    cooldown_cache = manager.dict()
+    fast_queue = multiprocessing.Queue(maxsize=200)
+    heavy_queue = multiprocessing.Queue(maxsize=200)
     
     # 2. Spin up Master OCR Workers (The GPU Pool)
     ocr_workers = []
-    logger.info(f"Spawning {config.OCR_WORKER_COUNT} Master OCR Workers...")
-    for _ in range(config.OCR_WORKER_COUNT):
-        worker = MasterOcrProcess(run_master_ocr, ocr_queue)
-        # NOT starting by default as requested
+    logger.info("Spawning 2 Fast OCR Workers and 3 Heavy OCR Workers...")
+    for _ in range(2):
+        worker = MasterOcrProcess(run_master_ocr, fast_queue, cooldown_cache, "fast")
+        ocr_workers.append(worker)
+    for _ in range(3):
+        worker = MasterOcrProcess(run_master_ocr, heavy_queue, cooldown_cache, "heavy")
         ocr_workers.append(worker)
         
     # 3. Create Camera Edge Feeders
@@ -179,7 +192,9 @@ def main():
     # Inject camera workers into app state so they can be toggled via frontend
     app.state.workers = camera_workers
     app.state.ocr_workers = ocr_workers
-    app.state.ocr_queue = ocr_queue
+    app.state.fast_queue = fast_queue
+    app.state.heavy_queue = heavy_queue
+    app.state.cooldown_cache = cooldown_cache
     
     try:
         import os

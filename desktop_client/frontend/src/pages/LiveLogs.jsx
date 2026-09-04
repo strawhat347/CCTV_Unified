@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
-import { fetchAllAlerts, fetchDetections, deleteAllLogs, fetchSystemStatus, connectAlertWebSocket, getApiBase, getApiKey } from '../services/api';
+import { fetchAllAlerts, fetchDetections, deleteAllLogs, fetchSystemStatus, connectAlertWebSocket, getApiBase, getApiKey, fetchCameras } from '../services/api';
 import { AlertCircle, Activity, Search, RefreshCw, Trash2, PowerOff, Power, X } from 'lucide-react';
+import { toast } from '../components/Toast';
+import { confirmModal } from '../components/ConfirmModal';
 
 // Formatter for timestamps
 const formatTime = (ts) => {
@@ -12,6 +14,29 @@ const formatTime = (ts) => {
   }
 };
 
+const ImageWithFallback = ({ src, onClick }) => {
+  const [error, setError] = useState(false);
+  
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-10 w-24 bg-bg-secondary rounded border border-border-primary text-text-muted text-xs cursor-default">
+        N/A
+      </div>
+    );
+  }
+  
+  return (
+    <div className="cursor-pointer inline-block" title="Click to open image" onClick={onClick}>
+      <img 
+        src={src} 
+        alt="Detection Crop" 
+        className="h-10 min-w-[80px] object-cover rounded border border-border-primary hover:opacity-80 transition-opacity bg-bg-secondary"
+        onError={() => setError(true)}
+      />
+    </div>
+  );
+};
+
 export default function LiveLogs() {
   const [activeTab, setActiveTab] = useState('detections');
   const [logs, setLogs] = useState([]);
@@ -19,6 +44,15 @@ export default function LiveLogs() {
   const [searchQuery, setSearchQuery] = useState('');
   const [workersActive, setWorkersActive] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
+  const [camerasMap, setCamerasMap] = useState({});
+
+  useEffect(() => {
+    fetchCameras().then(cams => {
+      const map = {};
+      cams.forEach(c => map[c.camera_id] = c.name);
+      setCamerasMap(map);
+    }).catch(e => console.error("Failed to fetch cameras for names:", e));
+  }, []);
 
   const loadLogs = async (hideLoadingState = false) => {
     if (!hideLoadingState) setLoading(true);
@@ -39,15 +73,23 @@ export default function LiveLogs() {
   };
 
   const handleDeleteAll = async () => {
-    if (!window.confirm('Are you sure you want to permanently delete all logs?')) return;
+    const ok = await confirmModal({
+      title: 'Clear All Live Logs',
+      message: 'Are you sure you want to permanently delete all detection logs? This action cannot be undone.',
+      confirmText: 'Clear Logs',
+      isDanger: true,
+    });
+    if (!ok) return;
+
     setLoading(true);
     try {
       await deleteAllLogs();
       setLogs([]);
       window.dispatchEvent(new CustomEvent('logsCleared'));
+      toast.success('All logs cleared successfully!');
     } catch (err) {
       console.error('Failed to delete logs:', err);
-      alert('Failed to delete logs');
+      toast.error('Failed to delete logs');
     } finally {
       setLoading(false);
     }
@@ -87,9 +129,10 @@ export default function LiveLogs() {
   const filteredLogs = logs.filter(log => {
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
+    const sourceName = camerasMap[log.camera_id] || `Source #${log.camera_id}`;
     const txt = activeTab === 'alerts' 
-      ? `${log.alert_type} ${log.severity} ${log.message} ${log.camera_id}` 
-      : `${log.object_type} ${log.plate_text || ''} ${log.camera_id}`;
+      ? `${log.alert_type} ${log.severity} ${log.message} ${sourceName}` 
+      : `${log.object_type} ${log.plate_text || ''} ${sourceName}`;
     return txt.toLowerCase().includes(q);
   });
 
@@ -184,7 +227,7 @@ export default function LiveLogs() {
                   <th className="px-4 py-3 font-semibold">Time</th>
                   <th className="px-4 py-3 font-semibold">Type</th>
                   <th className="px-4 py-3 font-semibold">Severity</th>
-                  <th className="px-4 py-3 font-semibold">Camera ID</th>
+                  <th className="px-4 py-3 font-semibold">Source</th>
                   <th className="px-4 py-3 font-semibold">Message</th>
                   <th className="px-4 py-3 font-semibold">Status</th>
                 </tr>
@@ -194,7 +237,7 @@ export default function LiveLogs() {
                   <th className="px-4 py-3 font-semibold">Image</th>
                   <th className="px-4 py-3 font-semibold">Object</th>
                   <th className="px-4 py-3 font-semibold">Confidence</th>
-                  <th className="px-4 py-3 font-semibold">Camera ID</th>
+                  <th className="px-4 py-3 font-semibold">Source</th>
                   <th className="px-4 py-3 font-semibold">Plate Text</th>
                 </tr>
               )}
@@ -223,7 +266,9 @@ export default function LiveLogs() {
                           {log.severity}
                         </span>
                       </td>
-                      <td className="px-4 py-2.5 text-text-primary">Cam #{log.camera_id}</td>
+                      <td className="px-4 py-2.5 text-text-primary max-w-[150px] truncate" title={camerasMap[log.camera_id] || `Source #${log.camera_id}`}>
+                        {camerasMap[log.camera_id] || `Source #${log.camera_id}`}
+                      </td>
                       <td className="px-4 py-2.5 text-text-secondary truncate max-w-xs" title={log.message}>{log.message || '-'}</td>
                       <td className="px-4 py-2.5">
                         {log.acknowledged ? (
@@ -238,24 +283,19 @@ export default function LiveLogs() {
                       <td className="px-4 py-2.5 text-text-secondary">{formatTime(log.detected_at)}</td>
                       <td className="px-4 py-2.5">
                         {log.image_path ? (
-                          <div 
-                            className="cursor-pointer inline-block" 
-                            title="Click to open image"
+                          <ImageWithFallback 
+                            src={`${getApiBase()}/crops/${log.image_path.split(/\\|\//).pop()}?api_key=${encodeURIComponent(getApiKey() || "")}`}
                             onClick={() => setSelectedImage(`${getApiBase()}/crops/${log.image_path.split(/\\|\//).pop()}?api_key=${encodeURIComponent(getApiKey() || "")}`)}
-                          >
-                            <img 
-                              src={`${getApiBase()}/crops/${log.image_path.split(/\\|\//).pop()}?api_key=${encodeURIComponent(getApiKey() || "")}`} 
-                              alt="Detection Crop" 
-                              className="h-10 object-cover rounded border border-border-primary hover:opacity-80 transition-opacity"
-                            />
-                          </div>
+                          />
                         ) : (
                           <span className="text-text-muted text-xs">No image</span>
                         )}
                       </td>
                       <td className="px-4 py-2.5 font-medium text-text-primary capitalize">{log.object_type}</td>
                       <td className="px-4 py-2.5 text-text-secondary">{(log.confidence * 100).toFixed(1)}%</td>
-                      <td className="px-4 py-2.5 text-text-primary">Cam #{log.camera_id}</td>
+                      <td className="px-4 py-2.5 text-text-primary max-w-[150px] truncate" title={camerasMap[log.camera_id] || `Source #${log.camera_id}`}>
+                        {camerasMap[log.camera_id] || `Source #${log.camera_id}`}
+                      </td>
                       <td className="px-4 py-2.5 text-text-bright font-mono">
                         {log.plate_text ? (
                           <div 

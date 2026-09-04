@@ -6,6 +6,8 @@ import AlertPanel from './AlertPanel';
 import AIPanel from './AIPanel';
 import CameraManagementModal from './CameraManagementModal';
 import { addCamera, importCamerasCsv, deleteAllCameras } from '../services/api';
+import { toast } from './Toast';
+import { confirmModal } from './ConfirmModal';
 
 export default function Layout() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -34,9 +36,9 @@ export default function Layout() {
       await addCamera(cameraData);
       window.dispatchEvent(new CustomEvent('camerasChanged'));
       setManageModalOpen(false);
-      alert('Camera added successfully!');
+      toast.success('Camera added successfully!');
     } catch (err) {
-      alert(`Failed to add camera: ${err.message}`);
+      toast.error(`Failed to add camera: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -50,9 +52,9 @@ export default function Layout() {
       await importCamerasCsv(file);
       window.dispatchEvent(new CustomEvent('camerasChanged'));
       setManageModalOpen(false);
-      alert('Cameras imported successfully!');
+      toast.success('Cameras imported successfully!');
     } catch (err) {
-      alert(`Import failed: ${err.message}`);
+      toast.error(`Import failed: ${err.message}`);
     } finally {
       setLoading(false);
       e.target.value = null;
@@ -60,15 +62,22 @@ export default function Layout() {
   };
 
   const handleClearAll = async () => {
-    if (!confirm('Are you sure you want to delete all cameras? This will also delete detections and alerts.')) return;
+    const ok = await confirmModal({
+      title: 'Delete All Cameras',
+      message: 'Are you sure you want to delete all cameras? This will also delete detections and alerts.',
+      confirmText: 'Delete All',
+      isDanger: true,
+    });
+    if (!ok) return;
+
     try {
       setLoading(true);
       await deleteAllCameras();
       window.dispatchEvent(new CustomEvent('camerasChanged'));
       setManageModalOpen(false);
-      alert('All cameras deleted!');
+      toast.success('All cameras deleted!');
     } catch (err) {
-      alert(`Clear failed: ${err.message}`);
+      toast.error(`Clear failed: ${err.message}`);
     } finally {
       setLoading(false);
     }

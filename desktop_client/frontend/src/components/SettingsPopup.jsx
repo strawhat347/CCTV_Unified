@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { logout, getCurrentUser } from '../services/api';
 import { User, LogOut, Settings, Moon, Activity, History, Users } from 'lucide-react';
 
 export default function SettingsPopup({ sidebarOpen, onClose }) {
@@ -31,8 +32,8 @@ export default function SettingsPopup({ sidebarOpen, onClose }) {
             <User className="w-3.5 h-3.5 text-white" />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-text-bright truncate">Admin User</p>
-            <p className="text-xs text-text-secondary truncate">admin@cctvunified.local</p>
+            <p className="text-sm font-semibold text-text-bright truncate capitalize">{getCurrentUser()?.username || 'User'}</p>
+            <p className="text-xs text-text-secondary truncate capitalize">{getCurrentUser()?.role || 'Guest'} Role</p>
           </div>
         </div>
       </div>
@@ -73,6 +74,7 @@ export default function SettingsPopup({ sidebarOpen, onClose }) {
       {/* Sign out */}
       <div className="px-1.5 py-1.5 border-t border-border-primary">
         <button
+          onClick={() => { logout(); window.location.reload(); }}
           className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-sm text-left text-text-secondary hover:text-danger hover:bg-bg-hover transition-colors"
         >
           <LogOut className="w-3.5 h-3.5 shrink-0" />
@@ -82,3 +84,5 @@ export default function SettingsPopup({ sidebarOpen, onClose }) {
     </div>
   );
 }
+
+

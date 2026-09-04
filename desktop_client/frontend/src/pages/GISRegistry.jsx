@@ -202,8 +202,14 @@ export default function GISRegistry() {
     
     try {
       // Get existing active cameras
-      const saved = localStorage.getItem('videowall_activeCameras');
-      let activeCameras = saved ? JSON.parse(saved) : [];
+      let activeCameras = [];
+      try {
+        const saved = localStorage.getItem('videowall_activeCameras');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) activeCameras = parsed;
+        }
+      } catch (e) {}
       
       // Get the full camera objects for the selected IDs
       const camerasToAdd = filteredCameras.filter(c => selectedCameraIds.includes(c.camera_id));
@@ -219,7 +225,7 @@ export default function GISRegistry() {
       localStorage.setItem('videowall_activeCameras', JSON.stringify(activeCameras));
       
       // Navigate to video wall
-      window.location.hash = '#/live';
+      window.location.hash = '#/live/cameras';
     } catch (e) {
       console.error("Failed to launch in video wall", e);
     }
@@ -343,7 +349,7 @@ export default function GISRegistry() {
                                 activeCameras.push(cam);
                                 localStorage.setItem('videowall_activeCameras', JSON.stringify(activeCameras));
                               }
-                              window.location.hash = '#/live';
+                              window.location.hash = '#/live/cameras';
                             } catch (e) {
                               console.error("Failed to launch in video wall", e);
                             }
